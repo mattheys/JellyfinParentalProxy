@@ -1,3 +1,4 @@
+using Domain;
 using MudBlazor.Services;
 using WebAdmin.Components;
 
@@ -7,54 +8,65 @@ public class Program
 {
     public static async Task Main(string[] args)
     {
+        // Build the reverse proxy (initialises SQLite, registers all proxy services)
         var reverseProxyApp = await ReverseProxy.AppBuilder.BuildReverseProxy();
 
+        // -----------------------------------------------------------------------
+        // WebAdmin app
+        // -----------------------------------------------------------------------
         var builder = WebApplication.CreateBuilder(args);
 
-        // Add MudBlazor services
+        // MudBlazor
         _ = builder.Services.AddMudServices();
 
-        // Add services to the container.
+        // Razor / Blazor
         _ = builder.Services.AddRazorComponents()
                             .AddInteractiveServerComponents();
 
+        // Share the IRatingCache singleton that was registered inside the
+        // reverse proxy's DI container so the WebAdmin UI can read and write it.
+        var sharedCache = reverseProxyApp.Services.GetRequiredService<IRatingCache>();
+        _ = builder.Services.AddSingleton(sharedCache);
+
+        _ = builder.Logging.ClearProviders();
+        _ = builder.Logging.AddSimpleConsole(o =>
+        {
+            o.SingleLine = true;
+            o.TimestampFormat = "HH:mm:ss ";
+        });
+        _ = builder.Logging.SetMinimumLevel(LogLevel.Trace);
+
         var webAdminApp = builder.Build();
 
-        // Configure the HTTP request pipeline.
+        // HTTP pipeline
         if (!webAdminApp.Environment.IsDevelopment())
         {
             _ = webAdminApp.UseExceptionHandler("/Error");
-            // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
             _ = webAdminApp.UseHsts();
         }
 
         _ = webAdminApp.UseHttpsRedirection();
-
         _ = webAdminApp.UseAntiforgery();
-
         _ = webAdminApp.MapStaticAssets();
         _ = webAdminApp.MapRazorComponents<App>()
-            .AddInteractiveServerRenderMode();
+                        .AddInteractiveServerRenderMode();
 
+        // Bind ports
         reverseProxyApp.Urls.Clear();
         reverseProxyApp.Urls.Add("http://*:5000");
 
         webAdminApp.Urls.Clear();
         webAdminApp.Urls.Add("http://*:5001");
 
-        var webAdminTask = webAdminApp.RunAsync();
-        var reverseProxyTask = reverseProxyApp.RunAsync();
+        // Run both apps concurrently; stop both if either exits
+        var webAdminTask      = webAdminApp.RunAsync();
+        var reverseProxyTask  = reverseProxyApp.RunAsync();
 
         var exitedTask = await Task.WhenAny(webAdminTask, reverseProxyTask);
 
-        if(exitedTask == webAdminTask)
-        {
-            await webAdminApp.StopAsync();
-        }
-        else
-        {
+        if (exitedTask == webAdminTask)
             await reverseProxyApp.StopAsync();
-        }
-
+        else
+            await webAdminApp.StopAsync();
     }
 }

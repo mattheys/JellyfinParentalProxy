@@ -1,0 +1,285 @@
+@page "/ratings"
+
+@using Domain
+@using MudBlazor
+@inject IRatingCache RatingCache
+@inject ISnackbar Snackbar
+
+<PageTitle>Rating Cache</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Shield" Class="mr-2" Style="vertical-align:middle" />
+    Rating Cache
+</MudText>
+<MudText Typo="Typo.body2" Class="mb-6" Style="color: var(--mud-palette-text-secondary)">
+    Browse all cached ratings, apply manual overrides, or clear them to allow TMDB re-lookup.
+</MudText>
+
+<!-- Toolbar -->
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4" Spacing="2">
+    <MudTextField @bind-Value="_searchText"
+                  Placeholder="Search by name or ID…"
+                  Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search"
+                  Clearable="true"
+                  Immediate="true"
+                  Style="max-width:360px" />
+
+    <MudSpacer />
+
+    <MudChipSet @bind-SelectedValues="_typeFilters" SelectionMode="SelectionMode.MultiSelection">
+        @foreach (var t in _allTypes)
+        {
+            <MudChip Value="@t" Size="Size.Small" Color="Color.Default">@t</MudChip>
+        }
+    </MudChipSet>
+
+    <MudButton StartIcon="@Icons.Material.Filled.Refresh"
+               Variant="Variant.Outlined" Size="Size.Small"
+               OnClick="Reload">Refresh</MudButton>
+</MudStack>
+
+<!-- Stats strip -->
+<MudStack Row="true" Spacing="3" Class="mb-5">
+    @foreach (var stat in _stats)
+    {
+        <MudPaper Elevation="0" Class="pa-3" Style="border:1px solid var(--mud-palette-lines-default); border-radius:8px; min-width:110px; text-align:center">
+            <MudText Typo="Typo.h5" Style="@($"color:{stat.Color}")">@stat.Count</MudText>
+            <MudText Typo="Typo.caption">@stat.Label</MudText>
+        </MudPaper>
+    }
+</MudStack>
+
+<!-- Data table -->
+<MudTable T="CacheEntry"
+          Items="@FilteredEntries"
+          Hover="true"
+          Dense="true"
+          Elevation="1"
+          SortLabel="Sort"
+          AllowUnsorted="false"
+          RowsPerPage="25">
+
+    <HeaderContent>
+        <MudTh><MudTableSortLabel SortBy="@(new Func<CacheEntry,object>(e => e.ItemName ?? e.JellyfinId))">Name / ID</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="@(new Func<CacheEntry,object>(e => e.ItemType ?? ""))">Type</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="@(new Func<CacheEntry,object>(e => (int)e.Rating))">Rating</MudTableSortLabel></MudTh>
+        <MudTh>Source</MudTh>
+        <MudTh>Last Attempt</MudTh>
+        <MudTh Style="text-align:right">Actions</MudTh>
+    </HeaderContent>
+
+    <RowTemplate>
+        <MudTd>
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.body2" Style="font-weight:500">
+                    @(context.ItemName ?? "—")
+                </MudText>
+                <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary); font-family:monospace">
+                    @context.JellyfinId
+                </MudText>
+            </MudStack>
+        </MudTd>
+
+        <MudTd>
+            <MudChip T="string" Size="Size.Small" Color="@TypeColor(context.ItemType)" Variant="Variant.Outlined">
+                @(context.ItemType ?? "?")
+            </MudChip>
+        </MudTd>
+
+        <MudTd>
+            <MudChip T="string" Size="Size.Small" Color="@RatingColor(context.Rating)" Variant="Variant.Filled">
+                @AgeRatingParser.ToDisplayString(context.Rating)
+            </MudChip>
+        </MudTd>
+
+        <MudTd>
+            @if (context.IsManualOverride)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Icon="@Icons.Material.Filled.Edit">Manual</MudChip>
+            }
+            else if (context.IsPendingLookup)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Default" Icon="@Icons.Material.Filled.HourglassEmpty">Pending</MudChip>
+            }
+            else
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Success" Icon="@Icons.Material.Filled.CloudDone">TMDB</MudChip>
+            }
+        </MudTd>
+
+        <MudTd>
+            <MudText Typo="Typo.caption">
+                @(context.LastAttemptUtc.HasValue
+                    ? context.LastAttemptUtc.Value.ToLocalTime().ToString("dd MMM yyyy HH:mm")
+                    : "—")
+            </MudText>
+        </MudTd>
+
+        <MudTd Style="text-align:right">
+            <MudTooltip Text="Set manual rating override">
+                <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                               Size="Size.Small"
+                               Color="Color.Warning"
+                               OnClick="@(() => OpenOverrideDialog(context))" />
+            </MudTooltip>
+
+            @if (context.IsManualOverride)
+            {
+                <MudTooltip Text="Remove override — allow TMDB re-lookup">
+                    <MudIconButton Icon="@Icons.Material.Filled.RestartAlt"
+                                   Size="Size.Small"
+                                   Color="Color.Error"
+                                   OnClick="@(() => RemoveOverride(context))" />
+                </MudTooltip>
+            }
+        </MudTd>
+    </RowTemplate>
+
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new[] { 25, 50, 100 }" />
+    </PagerContent>
+</MudTable>
+
+<!-- Override Dialog -->
+<MudDialog @bind-Visible="_dialogOpen">
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Edit" Class="mr-1" Style="vertical-align:middle" />
+            Set Rating Override
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_dialogEntry is not null)
+        {
+            <MudText Typo="Typo.body2" Class="mb-4">
+                Setting a manual override for
+                <strong>@(_dialogEntry.ItemName ?? _dialogEntry.JellyfinId)</strong>.
+                This will take priority over any TMDB-resolved rating.
+            </MudText>
+
+            <MudSelect T="string" @bind-Value="_selectedRating" Label="Rating" Variant="Variant.Outlined">
+                @foreach (var r in AgeRatingParser.AllRatingStrings)
+                {
+                    <MudSelectItem Value="@r">@r</MudSelectItem>
+                }
+            </MudSelect>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _dialogOpen = false)">Cancel</MudButton>
+        <MudButton Color="Color.Warning" Variant="Variant.Filled" OnClick="ApplyOverride">
+            Apply Override
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    // ── Data ──────────────────────────────────────────────────────────────────
+    private List<CacheEntry> _entries    = new();
+    private string           _searchText = string.Empty;
+    private IReadOnlyCollection<string> _typeFilters = Array.Empty<string>();
+
+    private static readonly string[] _allTypes =
+        { "Movie", "Series", "Episode", "Season", "Trailer", "Program" };
+
+    // ── Dialog state ──────────────────────────────────────────────────────────
+    private bool       _dialogOpen     = false;
+    private CacheEntry? _dialogEntry   = null;
+    private string     _selectedRating = "PG";
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+    protected override void OnInitialized() => Reload();
+
+    private void Reload()
+    {
+        _entries = RatingCache.GetAllEntries().ToList();
+        StateHasChanged();
+    }
+
+    // ── Filtering ─────────────────────────────────────────────────────────────
+    private IEnumerable<CacheEntry> FilteredEntries
+    {
+        get
+        {
+            var q = _entries.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(_searchText))
+            {
+                var needle = _searchText.Trim();
+                q = q.Where(e =>
+                    (e.ItemName?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || e.JellyfinId.Contains(needle, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (_typeFilters.Count > 0)
+                q = q.Where(e => e.ItemType is not null && _typeFilters.Contains(e.ItemType));
+
+            return q;
+        }
+    }
+
+    // ── Stats ─────────────────────────────────────────────────────────────────
+    private IEnumerable<(string Label, int Count, string Color)> _stats => new[]
+    {
+        ("Total",    _entries.Count,                                    "var(--mud-palette-text-primary)"),
+        ("Manual",   _entries.Count(e => e.IsManualOverride),           "var(--mud-palette-warning)"),
+        ("Pending",  _entries.Count(e => e.IsPendingLookup),            "var(--mud-palette-text-secondary)"),
+        ("G / PG",   _entries.Count(e => e.Rating <= AgeRating.PG),    "var(--mud-palette-success)"),
+        ("PG-13",    _entries.Count(e => e.Rating == AgeRating.PG13),  "var(--mud-palette-info)"),
+        ("R / NC-17",_entries.Count(e => e.Rating >= AgeRating.R && e.Rating < AgeRating.Unrated), "var(--mud-palette-error)"),
+        ("Unrated",  _entries.Count(e => e.Rating == AgeRating.Unrated),"var(--mud-palette-text-secondary)"),
+    };
+
+    // ── Dialog ────────────────────────────────────────────────────────────────
+    private void OpenOverrideDialog(CacheEntry entry)
+    {
+        _dialogEntry    = entry;
+        _selectedRating = AgeRatingParser.ToDisplayString(entry.Rating);
+        _dialogOpen     = true;
+    }
+
+    private async Task ApplyOverride()
+    {
+        if (_dialogEntry is null) return;
+
+        var rating = AgeRatingParser.Parse(_selectedRating);
+        await RatingCache.StoreManualOverrideAsync(
+            _dialogEntry.JellyfinId, rating,
+            _dialogEntry.ItemName, _dialogEntry.ItemType);
+
+        Snackbar.Add(
+            $"Override set: {_dialogEntry.ItemName ?? _dialogEntry.JellyfinId} → {_selectedRating}",
+            Severity.Success);
+
+        _dialogOpen = false;
+        Reload();
+    }
+
+    private async Task RemoveOverride(CacheEntry entry)
+    {
+        await RatingCache.RemoveOverrideAsync(entry.JellyfinId);
+        Snackbar.Add($"Override removed for {entry.ItemName ?? entry.JellyfinId}", Severity.Info);
+        Reload();
+    }
+
+    // ── Colour helpers ────────────────────────────────────────────────────────
+    private static Color RatingColor(AgeRating r) => r switch
+    {
+        AgeRating.G       => Color.Success,
+        AgeRating.PG      => Color.Success,
+        AgeRating.PG13    => Color.Info,
+        AgeRating.R       => Color.Error,
+        AgeRating.NC17    => Color.Error,
+        _                 => Color.Default,
+    };
+
+    private static Color TypeColor(string? t) => t switch
+    {
+        "Movie"   => Color.Primary,
+        "Series"  => Color.Secondary,
+        "Episode" => Color.Tertiary,
+        "Season"  => Color.Tertiary,
+        _         => Color.Default,
+    };
+}

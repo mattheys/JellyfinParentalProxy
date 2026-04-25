@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Domain;
 using Microsoft.Extensions.Logging;
@@ -13,13 +12,13 @@ namespace ReverseProxy;
 public sealed class TmdbService
 {
     private readonly IHttpClientFactory _httpFactory;
-    private readonly ProxyOptions _opts;
+    private readonly ProxyOptions       _opts;
     private readonly ILogger<TmdbService> _log;
 
     public TmdbService(
-        IHttpClientFactory httpFactory,
-        IOptions<ProxyOptions> options,
-        ILogger<TmdbService> log)
+        IHttpClientFactory       httpFactory,
+        IOptions<ProxyOptions>   options,
+        ILogger<TmdbService>     log)
     {
         _httpFactory = httpFactory;
         _opts        = options.Value;
@@ -32,13 +31,11 @@ public sealed class TmdbService
     // Public API
     // -------------------------------------------------------------------------
 
-    /// <summary>Resolve a rating for a movie.</summary>
     public Task<AgeRating?> GetMovieRatingAsync(long tmdbId) =>
         GetRatingAsync(
             $"movie/{tmdbId}/release_dates?api_key={_opts.TmdbApiKey}",
             ParseMovieRating);
 
-    /// <summary>Resolve a rating for a TV series.</summary>
     public Task<AgeRating?> GetTvRatingAsync(long tmdbId) =>
         GetRatingAsync(
             $"tv/{tmdbId}/content_ratings?api_key={_opts.TmdbApiKey}",
@@ -48,7 +45,8 @@ public sealed class TmdbService
     // Private helpers
     // -------------------------------------------------------------------------
 
-    private async Task<AgeRating?> GetRatingAsync(string relativeUrl, Func<JsonNode, string?, AgeRating?> parser)
+    private async Task<AgeRating?> GetRatingAsync(
+        string relativeUrl, Func<JsonNode, string?, AgeRating?> parser)
     {
         try
         {
@@ -68,10 +66,6 @@ public sealed class TmdbService
         }
     }
 
-    /// <summary>
-    /// Parses /movie/{id}/release_dates.
-    /// Prefers theatrical releases (type=3) in the requested region, then US.
-    /// </summary>
     private static AgeRating? ParseMovieRating(JsonNode root, string? region)
     {
         var results = root["results"]?.AsArray();
@@ -93,7 +87,6 @@ public sealed class TmdbService
         var dates = country["release_dates"]?.AsArray();
         if (dates is null) return null;
 
-        // Prefer type=3 (Theatrical), then any that has a non-empty cert.
         var best = dates.FirstOrDefault(d => d?["type"]?.GetValue<int>() == 3)
                 ?? dates.FirstOrDefault(d =>
                     !string.IsNullOrEmpty(d?["certification"]?.GetValue<string>()));
@@ -102,10 +95,6 @@ public sealed class TmdbService
         return string.IsNullOrEmpty(cert) ? null : cert;
     }
 
-    /// <summary>
-    /// Parses /tv/{id}/content_ratings.
-    /// Prefers the requested region, then US.
-    /// </summary>
     private static AgeRating? ParseTvRating(JsonNode root, string? region)
     {
         var results = root["results"]?.AsArray();

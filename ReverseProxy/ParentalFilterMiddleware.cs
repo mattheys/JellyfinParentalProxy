@@ -12,41 +12,47 @@ namespace ReverseProxy;
 /// <summary>
 /// ASP.NET Core middleware that sits in front of YARP.
 ///
-/// For JSON responses that contain media items, it:
+/// For JSON responses that contain media items it:
 ///   1. Removes items whose effective rating exceeds <see cref="ProxyOptions.MaxRating"/>.
-///   2. For unrated items, checks the local cache for a TMDB-resolved rating.
-///   3. Fires background TMDB lookups for items that have never been seen or
-///      whose retry cooldown has expired.
+///   2. For unrated items checks the local cache for a TMDB-resolved rating.
+///   3. Enqueues background TMDB lookups (via <see cref="ITmdbLookupQueue"/>) for
+///      items that have never been seen or whose retry cooldown has expired.
+///   4. For Episodes and Seasons, falls back to the parent Series rating when no
+///      individual rating is available.
 /// </summary>
 public sealed class ParentalFilterMiddleware
 {
     // Jellyfin item types that carry an age rating
     private static readonly HashSet<string> MediaTypes = new(StringComparer.OrdinalIgnoreCase)
-        { "Movie", "Series", "Episode", "Trailer", "Program" };
+        { "Movie", "Series", "Episode", "Season", "Trailer", "Program" };
 
-    private readonly RequestDelegate _next;
-    private readonly AgeRating _maxAllowed;
-    private readonly RatingCache _cache;
-    private readonly TmdbService _tmdb;
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly string _jellyfinUrl;
-    private readonly ILogger<ParentalFilterMiddleware> _log;
+    // Item types that should inherit from their parent Series when unrated
+    private static readonly HashSet<string> SeriesChildTypes = new(StringComparer.OrdinalIgnoreCase)
+        { "Episode", "Season" };
+
+    private readonly RequestDelegate                    _next;
+    private readonly AgeRating                          _maxAllowed;
+    private readonly IRatingCache                       _cache;
+    private readonly ITmdbLookupQueue                   _queue;
+    private readonly IHttpClientFactory                 _httpClientFactory;
+    private readonly string                             _jellyfinUrl;
+    private readonly ILogger<ParentalFilterMiddleware>  _log;
 
     public ParentalFilterMiddleware(
-        RequestDelegate next,
-        IOptions<ProxyOptions> options,
-        RatingCache cache,
-        TmdbService tmdb,
-        IHttpClientFactory httpClientFactory,
-        ILogger<ParentalFilterMiddleware> log)
+        RequestDelegate                    next,
+        IOptions<ProxyOptions>             options,
+        IRatingCache                       cache,
+        ITmdbLookupQueue                   queue,
+        IHttpClientFactory                 httpClientFactory,
+        ILogger<ParentalFilterMiddleware>  log)
     {
-        _next = next;
-        _cache = cache;
-        _tmdb = tmdb;
+        _next              = next;
+        _cache             = cache;
+        _queue             = queue;
         _httpClientFactory = httpClientFactory;
-        _jellyfinUrl = options.Value.JellyfinUrl;
-        _log = log;
-        _maxAllowed = AgeRatingParser.Parse(options.Value.MaxRating);
+        _jellyfinUrl       = options.Value.JellyfinUrl;
+        _log               = log;
+        _maxAllowed        = AgeRatingParser.Parse(options.Value.MaxRating);
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -55,20 +61,11 @@ public sealed class ParentalFilterMiddleware
         await using var buffer = new MemoryStream();
         context.Response.Body = buffer;
 
-        try
-        {
-            // Let YARP (or any other downstream middleware) run.
-            await _next(context);
-        }
-        finally
-        {
-            // Always restore the original stream so we can write back to it.
-            context.Response.Body = originalBody;
-        }
+        try   { await _next(context); }
+        finally { context.Response.Body = originalBody; }
 
         buffer.Seek(0, SeekOrigin.Begin);
 
-        // Only attempt filtering on JSON responses.
         var contentType = context.Response.ContentType ?? string.Empty;
         if (!contentType.Contains("application/json", StringComparison.OrdinalIgnoreCase))
         {
@@ -76,7 +73,7 @@ public sealed class ParentalFilterMiddleware
             return;
         }
 
-        // Check if the payload is compressed
+        // Decompress if needed
         var contentEncoding = context.Response.Headers.ContentEncoding.ToString() ?? string.Empty;
         Stream readStream = buffer;
         IDisposable? streamToDispose = null;
@@ -84,69 +81,51 @@ public sealed class ParentalFilterMiddleware
         if (contentEncoding.Contains("br", StringComparison.OrdinalIgnoreCase))
         {
             var br = new BrotliStream(buffer, CompressionMode.Decompress, leaveOpen: true);
-            readStream = br;
-            streamToDispose = br;
+            readStream = br; streamToDispose = br;
         }
         else if (contentEncoding.Contains("gzip", StringComparison.OrdinalIgnoreCase))
         {
             var gz = new GZipStream(buffer, CompressionMode.Decompress, leaveOpen: true);
-            readStream = gz;
-            streamToDispose = gz;
+            readStream = gz; streamToDispose = gz;
         }
         else if (contentEncoding.Contains("deflate", StringComparison.OrdinalIgnoreCase))
         {
             var df = new DeflateStream(buffer, CompressionMode.Decompress, leaveOpen: true);
-            readStream = df;
-            streamToDispose = df;
+            readStream = df; streamToDispose = df;
         }
 
-        // Read the optionally decompressed body
         string body = string.Empty;
         try
         {
             using var reader = new StreamReader(readStream, Encoding.UTF8, leaveOpen: true);
             body = await reader.ReadToEndAsync();
         }
-        catch
-        {
-            // Ignore decompression/read errors; we'll fallback to passing the original buffer through
-        }
-        finally
-        {
-            streamToDispose?.Dispose();
-        }
+        catch { }
+        finally { streamToDispose?.Dispose(); }
 
         JsonNode? json = null;
         if (!string.IsNullOrWhiteSpace(body))
         {
             try { json = JsonNode.Parse(body); }
-            catch { /* Ignore parse errors */ }
+            catch { }
         }
 
         if (json is not null)
         {
-            // Capture the auth header so we can query Jellyfin later if we need to
             var authHeader = context.Request.Headers.Authorization.ToString();
-
             var (filtered, wasModified) = await FilterJsonAsync(json, authHeader);
 
             if (wasModified)
             {
                 var outBytes = JsonSerializer.SerializeToUtf8Bytes(filtered);
-
-                // If we are supplying a modified, fixed-length uncompressed payload, 
-                // we MUST remove chunking and encoding headers to avoid protocol violations.
                 context.Response.Headers.Remove("Transfer-Encoding");
                 context.Response.Headers.Remove("Content-Encoding");
-
                 context.Response.ContentLength = outBytes.Length;
                 await originalBody.WriteAsync(outBytes);
                 return;
             }
         }
 
-        // If the payload was unmodified OR couldn't be parsed,
-        // leave headers completely intact and write the exact original buffered bytes back.
         buffer.Seek(0, SeekOrigin.Begin);
         await buffer.CopyToAsync(originalBody);
     }
@@ -155,9 +134,9 @@ public sealed class ParentalFilterMiddleware
     // Filtering logic
     // -------------------------------------------------------------------------
 
-    private async Task<(JsonNode Result, bool WasModified)> FilterJsonAsync(JsonNode json, string authHeader)
+    private async Task<(JsonNode Result, bool WasModified)> FilterJsonAsync(
+        JsonNode json, string authHeader)
     {
-        // Scenario 1: QueryResult  — { "Items": [...], "TotalRecordCount": N }
         if (json is JsonObject obj && obj["Items"]?.AsArray() is JsonArray items)
         {
             var (filtered, removed) = await FilterArrayAsync(items, authHeader);
@@ -165,14 +144,11 @@ public sealed class ParentalFilterMiddleware
 
             if (obj["TotalRecordCount"] is JsonValue totalNode &&
                 totalNode.TryGetValue<int>(out var total))
-            {
                 obj["TotalRecordCount"] = Math.Max(0, total - removed);
-            }
 
             return (obj, removed > 0);
         }
 
-        // Scenario 2: Raw array  — Next Up, Latest Media, etc.
         if (json is JsonArray rawArray)
         {
             var (filtered, removed) = await FilterArrayAsync(rawArray, authHeader);
@@ -182,10 +158,11 @@ public sealed class ParentalFilterMiddleware
         return (json, false);
     }
 
-    private async Task<(JsonArray Filtered, int RemovedCount)> FilterArrayAsync(JsonArray items, string authHeader)
+    private async Task<(JsonArray Filtered, int RemovedCount)> FilterArrayAsync(
+        JsonArray items, string authHeader)
     {
         var filtered = new JsonArray();
-        var removed = 0;
+        var removed  = 0;
 
         foreach (var item in items)
         {
@@ -205,40 +182,51 @@ public sealed class ParentalFilterMiddleware
         var itemType = item["Type"]?.GetValue<string>() ?? string.Empty;
 
         if (!MediaTypes.Contains(itemType))
-            return true; // Non-media items always pass through.
+            return true;
 
-        var jellyfinId = item["Id"]?.GetValue<string>() ?? string.Empty;
+        var jellyfinId     = item["Id"]?.GetValue<string>()             ?? string.Empty;
         var jellyfinRating = item["OfficialRating"]?.GetValue<string>();
-        var parsedRating = AgeRatingParser.Parse(jellyfinRating);
-        var isUnrated = parsedRating == AgeRating.Unrated;
+        var parsedRating   = AgeRatingParser.Parse(jellyfinRating);
+        var isUnrated      = parsedRating == AgeRating.Unrated;
 
-        // Determine the effective rating.
+        // --- Determine the effective rating ---
+
         AgeRating effectiveRating;
 
         if (!isUnrated)
         {
+            // The item carries its own Jellyfin rating — use it directly.
             effectiveRating = parsedRating;
         }
-        else if (!string.IsNullOrEmpty(jellyfinId) && _cache.GetRating(jellyfinId) is AgeRating cached)
+        else if (!string.IsNullOrEmpty(jellyfinId) &&
+                 _cache.GetRating(jellyfinId) is AgeRating cached)
         {
+            // We have a cached (TMDB-resolved or manual) rating.
             effectiveRating = cached;
+        }
+        else if (SeriesChildTypes.Contains(itemType))
+        {
+            // Episode / Season with no individual rating — try the parent Series.
+            effectiveRating = await ResolveSeriesRatingAsync(item, authHeader);
         }
         else
         {
             effectiveRating = AgeRating.Unrated;
         }
 
-        // Fire background TMDB lookup if appropriate.
+        // --- Enqueue a TMDB lookup if still unresolved ---
+
         if (effectiveRating == AgeRating.Unrated
             && !string.IsNullOrEmpty(jellyfinId)
-            && _tmdb.IsEnabled
             && _cache.ShouldLookup(jellyfinId))
         {
+            // For episodes/seasons, look up the parent Series ID on TMDB.
+            // For everything else, look up by the item's own TMDB ID.
             var tmdbIdStr = item["ProviderIds"]?["Tmdb"]?.GetValue<string>();
-            var itemName = item["Name"]?.GetValue<string>() ?? "Unknown";
+            var itemName  = item["Name"]?.GetValue<string>() ?? "Unknown";
 
-            // Pass down to the background task (which will fetch the ID if missing)
-            _ = Task.Run(() => TmdbLookupAsync(jellyfinId, tmdbIdStr, itemType, itemName, authHeader));
+            _queue.TryEnqueue(new TmdbLookupRequest(
+                jellyfinId, tmdbIdStr, itemType, itemName, authHeader));
         }
 
         var allowed = effectiveRating <= _maxAllowed;
@@ -257,78 +245,76 @@ public sealed class ParentalFilterMiddleware
     }
 
     // -------------------------------------------------------------------------
-    // Background TMDB lookup
+    // Series rating inheritance
     // -------------------------------------------------------------------------
 
-    private async Task TmdbLookupAsync(string jellyfinId, string? tmdbIdStr, string itemType, string itemName, string authHeader)
+    /// <summary>
+    /// For an Episode or Season, tries to resolve the rating via:
+    ///   1. The SeriesId field on the item itself (cache lookup).
+    ///   2. Falling back to the item's own Jellyfin OfficialRating (already
+    ///      checked as Unrated at this point, so this is a no-op guard).
+    /// </summary>
+    private async Task<AgeRating> ResolveSeriesRatingAsync(JsonNode item, string authHeader)
     {
-        long tmdbId = 0;
+        // Jellyfin typically populates SeriesId on Episode items.
+        var seriesId = item["SeriesId"]?.GetValue<string>();
 
-        // Try to parse the ID from the payload, otherwise fall back to asking Jellyfin
-        if (!long.TryParse(tmdbIdStr, out tmdbId))
+        if (!string.IsNullOrEmpty(seriesId))
         {
-            tmdbId = await FetchTmdbIdFromJellyfinAsync(jellyfinId, authHeader);
+            // Check the cache first (fast path — no network call)
+            if (_cache.GetRating(seriesId) is AgeRating cachedSeriesRating)
+                return cachedSeriesRating;
+
+            // Not cached — try to fetch the Series item from Jellyfin and cache it
+            var seriesName   = item["SeriesName"]?.GetValue<string>() ?? "Unknown Series";
+            var seriesRating = await FetchSeriesRatingFromJellyfinAsync(seriesId, authHeader);
+
+            if (seriesRating != AgeRating.Unrated)
+            {
+                // Cache the Jellyfin-supplied rating so subsequent episode/season
+                // requests for the same series are served from memory.
+                await _cache.StoreRatingAsync(seriesId, seriesRating, seriesName, "Series");
+                return seriesRating;
+            }
+
+            // Jellyfin had no rating either — enqueue a TMDB lookup for the Series
+            if (_cache.ShouldLookup(seriesId))
+            {
+                _queue.TryEnqueue(new TmdbLookupRequest(
+                    seriesId, null, "Series", seriesName, authHeader));
+            }
         }
 
-        if (tmdbId == 0)
-        {
-            _log.LogDebug("Could not resolve TMDB ID for {Type} '{Name}' (id={JellyfinId}). Marking as failed.", itemType, itemName, jellyfinId);
-            await _cache.RecordFailedLookupAsync(jellyfinId);
-            return;
-        }
-
-        _log.LogDebug("TMDB lookup: {Type} '{Name}' (tmdb_id={TmdbId})", itemType, itemName, tmdbId);
-
-        AgeRating? rating = itemType switch
-        {
-            "Movie" or "Trailer" => await _tmdb.GetMovieRatingAsync(tmdbId),
-            "Series" or "Episode" or "Program" => await _tmdb.GetTvRatingAsync(tmdbId),
-            _ => null,
-        };
-
-        if (rating.HasValue)
-        {
-            _log.LogInformation(
-                "TMDB resolved {Type} '{Name}' → {Rating}", itemType, itemName, rating.Value);
-
-            await _cache.StoreRatingAsync(jellyfinId, rating.Value);
-        }
-        else
-        {
-            _log.LogWarning(
-                "TMDB found no rating for {Type} '{Name}' (tmdb_id={TmdbId})",
-                itemType, itemName, tmdbId);
-
-            await _cache.RecordFailedLookupAsync(jellyfinId);
-        }
+        return AgeRating.Unrated;
     }
 
-    private async Task<long> FetchTmdbIdFromJellyfinAsync(string jellyfinId, string authHeader)
+    private async Task<AgeRating> FetchSeriesRatingFromJellyfinAsync(
+        string seriesId, string authHeader)
     {
         if (string.IsNullOrWhiteSpace(authHeader))
-            return 0;
+            return AgeRating.Unrated;
 
         try
         {
             var client = _httpClientFactory.CreateClient();
             client.DefaultRequestHeaders.Add("Authorization", authHeader);
 
-            var url = $"{_jellyfinUrl.TrimEnd('/')}/Items/{jellyfinId}";
+            var url      = $"{_jellyfinUrl.TrimEnd('/')}/Items/{seriesId}";
             var response = await client.GetAsync(url);
 
             if (!response.IsSuccessStatusCode)
-                return 0;
+                return AgeRating.Unrated;
 
-            var jsonString = await response.Content.ReadAsStringAsync();
-            var json = JsonNode.Parse(jsonString);
+            var jsonString     = await response.Content.ReadAsStringAsync();
+            var json           = JsonNode.Parse(jsonString);
+            var officialRating = json?["OfficialRating"]?.GetValue<string>();
 
-            var idStr = json?["ProviderIds"]?["Tmdb"]?.GetValue<string>();
-            return long.TryParse(idStr, out var tmdbId) ? tmdbId : 0;
+            return AgeRatingParser.Parse(officialRating);
         }
         catch (Exception ex)
         {
-            _log.LogDebug(ex, "Failed to retrieve full item metadata from Jellyfin for {Id}", jellyfinId);
-            return 0;
+            _log.LogDebug(ex, "Failed to retrieve Series metadata from Jellyfin for {Id}", seriesId);
+            return AgeRating.Unrated;
         }
     }
 }

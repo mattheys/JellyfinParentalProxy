@@ -7,13 +7,15 @@
     <UserSecretsId>a1b48920-d8b4-451f-a481-6143033da12d</UserSecretsId>
   </PropertyGroup>
 
-
   <ItemGroup>
     <PackageReference Include="MudBlazor" Version="8.*" />
   </ItemGroup>
 
-
   <ItemGroup>
+    <!-- ReverseProxy already references Domain, so WebAdmin gets it transitively.
+         The direct reference here makes the Domain types explicit in IDE tooling. -->
+    <ProjectReference Include="..\Domain\Domain.csproj" />
     <ProjectReference Include="..\ReverseProxy\ReverseProxy.csproj" />
   </ItemGroup>
+
 </Project>

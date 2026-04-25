@@ -6,11 +6,11 @@ namespace Domain;
 /// </summary>
 public enum AgeRating
 {
-    G      = 1,
-    PG     = 2,
-    PG13   = 3,
-    R      = 4,
-    NC17   = 5,
+    G       = 1,
+    PG      = 2,
+    PG13    = 3,
+    R       = 4,
+    NC17    = 5,
     Unrated = 6,
 }
 
@@ -26,4 +26,18 @@ public static class AgeRatingParser
             "NC-17" or "X"                      => AgeRating.NC17,
             _                                   => AgeRating.Unrated,
         };
+
+    public static string ToDisplayString(AgeRating rating) => rating switch
+    {
+        AgeRating.G       => "G",
+        AgeRating.PG      => "PG",
+        AgeRating.PG13    => "PG-13",
+        AgeRating.R       => "R",
+        AgeRating.NC17    => "NC-17",
+        AgeRating.Unrated => "Unrated",
+        _                 => "Unrated",
+    };
+
+    public static IReadOnlyList<string> AllRatingStrings { get; } =
+        new[] { "G", "PG", "PG-13", "R", "NC-17", "Unrated" };
 }

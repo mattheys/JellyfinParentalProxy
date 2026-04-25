@@ -12,9 +12,12 @@ namespace ReverseProxy;
 ///
 /// Reads are served entirely from an in-memory <see cref="ConcurrentDictionary"/>
 /// for zero-latency hot-path access.  Writes go to both the dictionary and the
-/// database immediately, so the SQLite file is always authoritative on disk.
+/// database immediately so the SQLite file is always authoritative on disk.
+///
+/// Manual overrides (set from the WebAdmin UI) take priority over automatic
+/// TMDB lookups and are never overwritten by background workers.
 /// </summary>
-public sealed class RatingCache
+public sealed class RatingCache : IRatingCache
 {
     // -------------------------------------------------------------------------
     // Internal model
@@ -22,20 +25,25 @@ public sealed class RatingCache
 
     private sealed record CacheRow(
         string JellyfinId,
-        string Rating,               // AgeRating enum name
-        long?  LastTmdbAttemptUnix   // null = confirmed rating; set = pending / failed
-    );
+        string Rating,
+        string? ItemName,
+        string? ItemType,
+        int IsManualOverride,      // SQLite has no bool; 0/1
+        long? LastTmdbAttemptUnix
+    )
+    { public CacheRow() : this(default, default, default, default, default, default) { } }
 
     // -------------------------------------------------------------------------
     // Fields
     // -------------------------------------------------------------------------
 
-    private readonly string _connectionString;
+    private readonly string   _connectionString;
     private readonly TimeSpan _retryCooldown;
     private readonly ILogger<RatingCache> _log;
 
     /// <summary>In-memory mirror of the SQLite table for lock-free reads.</summary>
-    private readonly ConcurrentDictionary<string, CacheRow> _map = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, CacheRow> _map =
+        new(StringComparer.OrdinalIgnoreCase);
 
     // -------------------------------------------------------------------------
     // Construction
@@ -58,17 +66,34 @@ public sealed class RatingCache
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync();
 
+        // Migrate: add new columns if they don't exist yet (idempotent)
         await conn.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS RatingCache (
                 JellyfinId          TEXT    NOT NULL PRIMARY KEY,
                 Rating              TEXT    NOT NULL,
+                ItemName            TEXT,
+                ItemType            TEXT,
+                IsManualOverride    INTEGER NOT NULL DEFAULT 0,
                 LastTmdbAttemptUnix INTEGER
             );
             """);
 
-        // Load all existing rows into the in-memory dictionary.
+        // Safe column additions for databases created before this schema version
+        foreach (var col in new[] {
+            ("ItemName",         "TEXT"),
+            ("ItemType",         "TEXT"),
+            ("IsManualOverride", "INTEGER NOT NULL DEFAULT 0") })
+        {
+            try
+            {
+                await conn.ExecuteAsync(
+                    $"ALTER TABLE RatingCache ADD COLUMN {col.Item1} {col.Item2};");
+            }
+            catch { /* column already exists */ }
+        }
+
         var rows = await conn.QueryAsync<CacheRow>(
-            "SELECT JellyfinId, Rating, LastTmdbAttemptUnix FROM RatingCache");
+            "SELECT JellyfinId, Rating, ItemName, ItemType, IsManualOverride, LastTmdbAttemptUnix FROM RatingCache");
 
         foreach (var row in rows)
             _map[row.JellyfinId] = row;
@@ -77,67 +102,123 @@ public sealed class RatingCache
     }
 
     // -------------------------------------------------------------------------
-    // Read API (lock-free)
+    // IRatingCache — Read
     // -------------------------------------------------------------------------
 
-    /// <summary>
-    /// Returns the cached <see cref="AgeRating"/> for the given Jellyfin item,
-    /// or <c>null</c> if the item has never been seen before.
-    /// </summary>
     public AgeRating? GetRating(string jellyfinId)
     {
         if (_map.TryGetValue(jellyfinId, out var row))
             return Enum.TryParse<AgeRating>(row.Rating, out var r) ? r : AgeRating.Unrated;
-
         return null;
     }
 
-    /// <summary>
-    /// Returns <c>true</c> when a background TMDB lookup should be fired for
-    /// this item right now.
-    /// </summary>
     public bool ShouldLookup(string jellyfinId)
     {
         if (!_map.TryGetValue(jellyfinId, out var row))
             return true; // Never seen
 
-        if (row.LastTmdbAttemptUnix is null)
-            return false; // Confirmed rating — no retry needed
+        if (row.IsManualOverride == 1)
+            return false; // Manual overrides are authoritative — never re-query
 
-        // Retry once the cooldown has expired
+        if (row.LastTmdbAttemptUnix is null)
+            return false; // Confirmed TMDB rating — no retry needed
+
         var elapsed = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - row.LastTmdbAttemptUnix.Value;
         return elapsed >= (long)_retryCooldown.TotalSeconds;
     }
 
+    public IReadOnlyList<CacheEntry> GetAllEntries()
+    {
+        return _map.Values
+            .Select(row => new CacheEntry(
+                JellyfinId:      row.JellyfinId,
+                ItemName:        row.ItemName,
+                ItemType:        row.ItemType,
+                Rating:          Enum.TryParse<AgeRating>(row.Rating, out var r) ? r : AgeRating.Unrated,
+                IsManualOverride:row.IsManualOverride == 1,
+                IsPendingLookup: row.LastTmdbAttemptUnix.HasValue && row.IsManualOverride == 0,
+                LastAttemptUtc:  row.LastTmdbAttemptUnix.HasValue
+                                    ? DateTimeOffset.FromUnixTimeSeconds(row.LastTmdbAttemptUnix.Value)
+                                    : null))
+            .OrderBy(e => e.ItemName ?? e.JellyfinId)
+            .ToList();
+    }
+
     // -------------------------------------------------------------------------
-    // Write API
+    // IRatingCache — Write
     // -------------------------------------------------------------------------
 
-    /// <summary>
-    /// Stores a successfully resolved rating.  Sets <c>LastTmdbAttemptUnix</c>
-    /// to <c>null</c> so we never retry unnecessarily.
-    /// </summary>
-    public async Task StoreRatingAsync(string jellyfinId, AgeRating rating)
+    public async Task StoreRatingAsync(string jellyfinId, AgeRating rating,
+        string? itemName = null, string? itemType = null)
     {
-        var row = new CacheRow(jellyfinId, rating.ToString(), null);
+        // Don't overwrite a manual override with an automatic one
+        if (_map.TryGetValue(jellyfinId, out var existing) && existing.IsManualOverride == 1)
+        {
+            _log.LogDebug("Skipping automatic rating update for {Id} — manual override is set", jellyfinId);
+            return;
+        }
+
+        var row = new CacheRow(jellyfinId, rating.ToString(),
+            itemName ?? existing?.ItemName,
+            itemType ?? existing?.ItemType,
+            IsManualOverride: 0,
+            LastTmdbAttemptUnix: null);
+
         _map[jellyfinId] = row;
         await UpsertAsync(row);
         _log.LogInformation("Cached rating {Rating} for Jellyfin item {Id}", rating, jellyfinId);
     }
 
-    /// <summary>
-    /// Records that a TMDB lookup was attempted but yielded no rating.
-    /// Stamps the current time so the retry cooldown is respected.
-    /// </summary>
     public async Task RecordFailedLookupAsync(string jellyfinId)
     {
+        _map.TryGetValue(jellyfinId, out var existing);
+
         var row = new CacheRow(
             jellyfinId,
             AgeRating.Unrated.ToString(),
+            existing?.ItemName,
+            existing?.ItemType,
+            IsManualOverride: 0,
             DateTimeOffset.UtcNow.ToUnixTimeSeconds());
 
         _map[jellyfinId] = row;
         await UpsertAsync(row);
+    }
+
+    public async Task StoreManualOverrideAsync(string jellyfinId, AgeRating rating,
+        string? itemName = null, string? itemType = null)
+    {
+        _map.TryGetValue(jellyfinId, out var existing);
+
+        var row = new CacheRow(
+            jellyfinId,
+            rating.ToString(),
+            itemName ?? existing?.ItemName,
+            itemType ?? existing?.ItemType,
+            IsManualOverride: 1,
+            LastTmdbAttemptUnix: null);
+
+        _map[jellyfinId] = row;
+        await UpsertAsync(row);
+        _log.LogInformation("Manual override set: {Rating} for Jellyfin item {Id}", rating, jellyfinId);
+    }
+
+    public async Task RemoveOverrideAsync(string jellyfinId)
+    {
+        if (_map.TryGetValue(jellyfinId, out var existing))
+        {
+            // Reset to unrated + failed timestamp so it will be re-queried
+            var row = new CacheRow(
+                jellyfinId,
+                AgeRating.Unrated.ToString(),
+                existing.ItemName,
+                existing.ItemType,
+                IsManualOverride: 0,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+            _map[jellyfinId] = row;
+            await UpsertAsync(row);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -152,10 +233,15 @@ public sealed class RatingCache
             await conn.OpenAsync();
 
             await conn.ExecuteAsync("""
-                INSERT INTO RatingCache (JellyfinId, Rating, LastTmdbAttemptUnix)
-                VALUES (@JellyfinId, @Rating, @LastTmdbAttemptUnix)
+                INSERT INTO RatingCache
+                    (JellyfinId, Rating, ItemName, ItemType, IsManualOverride, LastTmdbAttemptUnix)
+                VALUES
+                    (@JellyfinId, @Rating, @ItemName, @ItemType, @IsManualOverride, @LastTmdbAttemptUnix)
                 ON CONFLICT(JellyfinId) DO UPDATE SET
                     Rating              = excluded.Rating,
+                    ItemName            = COALESCE(excluded.ItemName, RatingCache.ItemName),
+                    ItemType            = COALESCE(excluded.ItemType, RatingCache.ItemType),
+                    IsManualOverride    = excluded.IsManualOverride,
                     LastTmdbAttemptUnix = excluded.LastTmdbAttemptUnix;
                 """, row);
         }

@@ -1,18 +1,16 @@
-﻿using Microsoft.AspNetCore.Builder;
+using Domain;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.Text;
+using Microsoft.Extensions.Options;
 
 namespace ReverseProxy;
 
-public class AppBuilder
+public static class AppBuilder
 {
     public static async Task<WebApplication> BuildReverseProxy()
     {
-
         var builder = WebApplication.CreateBuilder();
 
         // ---------------------------------------------------------------------------
@@ -24,20 +22,30 @@ public class AppBuilder
         // ---------------------------------------------------------------------------
         // HTTP clients
         // ---------------------------------------------------------------------------
-
-        // Named client for TMDB — separate from the proxy client
         _ = builder.Services.AddHttpClient("tmdb", client =>
         {
             client.BaseAddress = new Uri("https://api.themoviedb.org/3/");
-            client.Timeout = TimeSpan.FromSeconds(10);
+            client.Timeout     = TimeSpan.FromSeconds(10);
         });
 
         // ---------------------------------------------------------------------------
         // Application services
         // ---------------------------------------------------------------------------
+
+        // Cache — singleton, implements IRatingCache (used by both proxy and WebAdmin)
         _ = builder.Services.AddSingleton<RatingCache>();
+        _ = builder.Services.AddSingleton<IRatingCache>(sp => sp.GetRequiredService<RatingCache>());
+
+        // TMDB helpers
         _ = builder.Services.AddSingleton<TmdbService>();
-        builder.Services.AddHostedService<CacheFlushService>();
+
+        // Bounded lookup queue — replaces fire-and-forget Task.Run
+        _ = builder.Services.AddSingleton<TmdbLookupQueue>();
+        _ = builder.Services.AddSingleton<ITmdbLookupQueue>(sp => sp.GetRequiredService<TmdbLookupQueue>());
+
+        // Background hosted services
+        _ = builder.Services.AddHostedService<TmdbLookupWorker>();
+        _ = builder.Services.AddHostedService<CacheFlushService>();
 
         // ---------------------------------------------------------------------------
         // YARP reverse proxy
@@ -49,29 +57,31 @@ public class AppBuilder
         // ---------------------------------------------------------------------------
         // Logging
         // ---------------------------------------------------------------------------
-        _ = builder.Logging.ClearProviders();
-        _ = builder.Logging.AddSimpleConsole(o =>
-        {
-            o.SingleLine = true;
-            o.TimestampFormat = "HH:mm:ss ";
-        });
+        //_ = builder.Logging.ClearProviders();
+        //_ = builder.Logging.AddSimpleConsole(o =>
+        //{
+        //    o.SingleLine      = true;
+        //    o.TimestampFormat = "HH:mm:ss ";
+        //});
+        //_ = builder.Logging.SetMinimumLevel(LogLevel.Trace);
 
         var app = builder.Build();
 
-        // Initialise the SQLite database (creates tables if missing)
+        // Initialise SQLite (creates tables / runs migrations)
         var cache = app.Services.GetRequiredService<RatingCache>();
         await cache.InitialiseAsync();
 
-        // Wire up the content-filtering middleware BEFORE YARP
+        // Content-filtering middleware BEFORE YARP
         _ = app.UseMiddleware<ParentalFilterMiddleware>();
-
         _ = app.MapReverseProxy();
 
+        var opts = app.Services.GetRequiredService<IOptions<ProxyOptions>>().Value;
         app.Logger.LogInformation("Jellyfin Parental Proxy started");
-        app.Logger.LogInformation("Max allowed rating : {Rating}", app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<ProxyOptions>>().Value.MaxRating);
-        app.Logger.LogInformation("TMDB integration   : {Enabled}", !string.IsNullOrEmpty(app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<ProxyOptions>>().Value.TmdbApiKey) ? "enabled" : "disabled (no TMDB_API_KEY)");
+        app.Logger.LogInformation("Max allowed rating : {Rating}", opts.MaxRating);
+        app.Logger.LogInformation("TMDB integration   : {Enabled}",
+            !string.IsNullOrEmpty(opts.TmdbApiKey) ? "enabled" : "disabled (no TMDB_API_KEY)");
+        app.Logger.LogInformation("TMDB workers       : {Count}", opts.TmdbWorkerCount);
 
         return app;
-
     }
 }
