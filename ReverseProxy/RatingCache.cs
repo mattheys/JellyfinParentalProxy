@@ -78,20 +78,6 @@ public sealed class RatingCache : IRatingCache
             );
             """);
 
-        // Safe column additions for databases created before this schema version
-        foreach (var col in new[] {
-            ("ItemName",         "TEXT"),
-            ("ItemType",         "TEXT"),
-            ("IsManualOverride", "INTEGER NOT NULL DEFAULT 0") })
-        {
-            try
-            {
-                await conn.ExecuteAsync(
-                    $"ALTER TABLE RatingCache ADD COLUMN {col.Item1} {col.Item2};");
-            }
-            catch { /* column already exists */ }
-        }
-
         var rows = await conn.QueryAsync<CacheRow>(
             "SELECT JellyfinId, Rating, ItemName, ItemType, IsManualOverride, LastTmdbAttemptUnix FROM RatingCache");
 
