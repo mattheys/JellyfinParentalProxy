@@ -1,0 +1,37 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.3.11512.155
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ReverseProxy", "ReverseProxy\ReverseProxy.csproj", "{4B58649D-A6FC-45B9-9746-AB4B37E4D254}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Domain", "Domain\Domain.csproj", "{5F828D91-078E-46D2-B3ED-D1898ED1E403}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WebAdmin", "WebAdmin\WebAdmin.csproj", "{8E650ED4-DB79-4F97-9F75-2BA418FEF97B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{4B58649D-A6FC-45B9-9746-AB4B37E4D254}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4B58649D-A6FC-45B9-9746-AB4B37E4D254}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4B58649D-A6FC-45B9-9746-AB4B37E4D254}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4B58649D-A6FC-45B9-9746-AB4B37E4D254}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5F828D91-078E-46D2-B3ED-D1898ED1E403}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5F828D91-078E-46D2-B3ED-D1898ED1E403}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5F828D91-078E-46D2-B3ED-D1898ED1E403}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5F828D91-078E-46D2-B3ED-D1898ED1E403}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8E650ED4-DB79-4F97-9F75-2BA418FEF97B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8E650ED4-DB79-4F97-9F75-2BA418FEF97B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8E650ED4-DB79-4F97-9F75-2BA418FEF97B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8E650ED4-DB79-4F97-9F75-2BA418FEF97B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {3257B86F-EB73-4CAE-8AE7-2DAE92998917}
+	EndGlobalSection
+EndGlobal
