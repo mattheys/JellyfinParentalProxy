@@ -1,4 +1,5 @@
-using Domain;
+using Domain.Interfaces;
+using Domain.Models;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,15 +34,13 @@ public static class AppBuilder
         // ---------------------------------------------------------------------------
 
         // Cache — singleton, implements IRatingCache (used by both proxy and WebAdmin)
-        _ = builder.Services.AddSingleton<RatingCache>();
-        _ = builder.Services.AddSingleton<IRatingCache>(sp => sp.GetRequiredService<RatingCache>());
+        _ = builder.Services.AddSingleton<IRatingCache, RatingCache>();
 
         // TMDB helpers
         _ = builder.Services.AddSingleton<TmdbService>();
 
         // Bounded lookup queue — replaces fire-and-forget Task.Run
-        _ = builder.Services.AddSingleton<TmdbLookupQueue>();
-        _ = builder.Services.AddSingleton<ITmdbLookupQueue>(sp => sp.GetRequiredService<TmdbLookupQueue>());
+        _ = builder.Services.AddSingleton<ITmdbLookupQueue, TmdbLookupQueue>();
 
         // Background hosted services
         _ = builder.Services.AddHostedService<TmdbLookupWorker>();

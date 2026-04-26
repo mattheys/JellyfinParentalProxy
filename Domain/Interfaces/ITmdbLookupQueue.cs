@@ -1,4 +1,6 @@
-namespace Domain;
+using Domain.Models;
+
+namespace Domain.Interfaces;
 
 /// <summary>
 /// A bounded, non-blocking queue for background TMDB rating lookups.

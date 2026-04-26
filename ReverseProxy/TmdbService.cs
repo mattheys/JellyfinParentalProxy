@@ -1,5 +1,5 @@
 using System.Text.Json.Nodes;
-using Domain;
+using Domain.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 

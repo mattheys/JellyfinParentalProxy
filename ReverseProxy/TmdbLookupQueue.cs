@@ -1,5 +1,6 @@
 using System.Threading.Channels;
-using Domain;
+using Domain.Interfaces;
+using Domain.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 

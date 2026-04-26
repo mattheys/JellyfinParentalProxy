@@ -1,4 +1,4 @@
-namespace Domain;
+namespace Domain.Models;
 
 /// <summary>
 /// A single entry in the rating cache, returned for UI display and API consumers.

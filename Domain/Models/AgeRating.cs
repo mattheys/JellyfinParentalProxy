@@ -1,4 +1,4 @@
-namespace Domain;
+namespace Domain.Models;
 
 /// <summary>
 /// Ordered age-rating scale. Lower values are more permissive.

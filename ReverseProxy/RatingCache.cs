@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Dapper;
-using Domain;
+using Domain.Interfaces;
+using Domain.Models;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;

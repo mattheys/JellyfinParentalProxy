@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Domain;
+using Domain.Interfaces;
+using Domain.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -36,6 +38,7 @@ public sealed class ParentalFilterMiddleware
     private readonly ITmdbLookupQueue                   _queue;
     private readonly IHttpClientFactory                 _httpClientFactory;
     private readonly string                             _jellyfinUrl;
+    private readonly IBypassService                     _bypassService;
     private readonly ILogger<ParentalFilterMiddleware>  _log;
 
     public ParentalFilterMiddleware(
@@ -43,6 +46,7 @@ public sealed class ParentalFilterMiddleware
         IOptions<ProxyOptions>             options,
         IRatingCache                       cache,
         ITmdbLookupQueue                   queue,
+        IBypassService                     bypassService,
         IHttpClientFactory                 httpClientFactory,
         ILogger<ParentalFilterMiddleware>  log)
     {
@@ -51,12 +55,19 @@ public sealed class ParentalFilterMiddleware
         _queue             = queue;
         _httpClientFactory = httpClientFactory;
         _jellyfinUrl       = options.Value.JellyfinUrl;
+        _bypassService     = bypassService;
         _log               = log;
         _maxAllowed        = AgeRatingParser.Parse(options.Value.MaxRating);
     }
 
     public async Task InvokeAsync(HttpContext context)
     {
+        if (_bypassService.GetBypassState)
+        {
+            await _next(context);
+            return;
+        }
+
         var originalBody = context.Response.Body;
         await using var buffer = new MemoryStream();
         context.Response.Body = buffer;

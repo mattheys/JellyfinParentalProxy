@@ -1,4 +1,4 @@
-namespace Domain;
+namespace Domain.Models;
 
 /// <summary>
 /// A work item placed onto the TMDB lookup queue.

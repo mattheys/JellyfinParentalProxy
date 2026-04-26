@@ -1,4 +1,6 @@
-namespace Domain;
+using Domain.Models;
+
+namespace Domain.Interfaces;
 
 /// <summary>
 /// Abstracts the rating cache so that both the proxy middleware and the

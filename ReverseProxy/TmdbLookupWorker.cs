@@ -1,4 +1,5 @@
-using Domain;
+using Domain.Interfaces;
+using Domain.Models;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;

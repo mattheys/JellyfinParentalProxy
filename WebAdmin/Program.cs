@@ -1,4 +1,4 @@
-using Domain;
+using Domain.Interfaces;
 using MudBlazor.Services;
 using WebAdmin.Components;
 
@@ -50,6 +50,12 @@ public class Program
         _ = webAdminApp.MapStaticAssets();
         _ = webAdminApp.MapRazorComponents<App>()
                         .AddInteractiveServerRenderMode();
+
+        var apiGroup = webAdminApp.MapGroup("/api/bypass");
+        apiGroup.MapGet("/", (IBypassService b) => b.GetBypassState);
+        apiGroup.MapPost("/enable", (IBypassService b) => b.SetBypassState(true));
+        apiGroup.MapPost("/disable", (IBypassService b) => b.SetBypassState(false));
+        apiGroup.MapPost("/toggle", (IBypassService b) => b.SetBypassState(!b.GetBypassState));
 
         // Bind ports
         reverseProxyApp.Urls.Clear();

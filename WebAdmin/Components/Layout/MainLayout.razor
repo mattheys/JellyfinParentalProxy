@@ -1,4 +1,6 @@
-﻿@inherits LayoutComponentBase
+﻿@using Domain.Interfaces
+@inherits LayoutComponentBase
+@inject IBypassService bypassService
 
 <MudThemeProvider Theme="@_theme" IsDarkMode="_isDarkMode" />
 <MudPopoverProvider />
@@ -9,6 +11,7 @@
     <MudAppBar Elevation="1">
         <MudText Typo="Typo.h5" Class="ml-3">Jellyfin Parental Proxy</MudText>
         <MudSpacer />
+        <MudSwitch Value="bypassService.GetBypassState" />
         <MudIconButton Icon="@(DarkLightModeButtonIcon)" Color="Color.Inherit" OnClick="@DarkModeToggle" />
     </MudAppBar>
     <MudMainContent Class="mt-16 pa-4">

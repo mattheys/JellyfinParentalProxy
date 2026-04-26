@@ -1,4 +1,4 @@
-namespace Domain;
+namespace Domain.Models;
 
 /// <summary>
 /// All configurable options for the Jellyfin Parental Proxy.
