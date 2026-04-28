@@ -23,10 +23,11 @@ public class Program
         _ = builder.Services.AddRazorComponents()
                             .AddInteractiveServerComponents();
 
-        // Share the IRatingCache singleton that was registered inside the
-        // reverse proxy's DI container so the WebAdmin UI can read and write it.
-        var sharedCache = reverseProxyApp.Services.GetRequiredService<IRatingCache>();
+        // Share singletons from the reverse proxy's DI container with WebAdmin
+        var sharedCache  = reverseProxyApp.Services.GetRequiredService<IRatingCache>();
+        var sharedBypass = reverseProxyApp.Services.GetRequiredService<IBypassService>();
         _ = builder.Services.AddSingleton(sharedCache);
+        _ = builder.Services.AddSingleton(sharedBypass);
 
         _ = builder.Logging.ClearProviders();
         _ = builder.Logging.AddSimpleConsole(o =>
@@ -40,12 +41,7 @@ public class Program
 
         // HTTP pipeline
         if (!webAdminApp.Environment.IsDevelopment())
-        {
             _ = webAdminApp.UseExceptionHandler("/Error");
-            _ = webAdminApp.UseHsts();
-        }
-
-        _ = webAdminApp.UseHttpsRedirection();
         _ = webAdminApp.UseAntiforgery();
         _ = webAdminApp.MapStaticAssets();
         _ = webAdminApp.MapRazorComponents<App>()

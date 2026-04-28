@@ -18,8 +18,6 @@ public sealed class ProxyOptions
 
     public string DatabasePath { get; set; } = "rating_cache.db";
 
-    public int LogBufferSize { get; set; } = 500;
-
     /// <summary>
     /// Maximum number of concurrent TMDB lookup workers.
     /// Prevents the background queue from flooding the proxy under heavy load.

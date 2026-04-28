@@ -32,7 +32,7 @@ public sealed class RatingCache : IRatingCache
         int IsManualOverride,      // SQLite has no bool; 0/1
         long? LastTmdbAttemptUnix
     )
-    { public CacheRow() : this(default, default, default, default, default, default) { } }
+    { public CacheRow() : this(string.Empty, string.Empty, null, null, 0, null) { } }
 
     // -------------------------------------------------------------------------
     // Fields
@@ -117,7 +117,7 @@ public sealed class RatingCache : IRatingCache
 
     public IReadOnlyList<CacheEntry> GetAllEntries()
     {
-        return _map.Values
+        return _map.Values.ToList()
             .Select(row => new CacheEntry(
                 JellyfinId:      row.JellyfinId,
                 ItemName:        row.ItemName,

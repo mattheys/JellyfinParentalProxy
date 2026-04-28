@@ -55,8 +55,9 @@ public static class AppBuilder
         _ = builder.Services.AddSingleton<RatingCache>();
         _ = builder.Services.AddSingleton<IRatingCache>(sp => sp.GetRequiredService<RatingCache>());
 
-        // Bypass service
-        _ = builder.Services.AddSingleton<IBypassService, BypassService>();
+        // Bypass toggle — singleton shared with WebAdmin via explicit service extraction
+        _ = builder.Services.AddSingleton<BypassService>();
+        _ = builder.Services.AddSingleton<IBypassService>(sp => sp.GetRequiredService<BypassService>());
 
         // TMDB helpers
         _ = builder.Services.AddSingleton<TmdbService>();
@@ -75,16 +76,6 @@ public static class AppBuilder
         _ = builder.Services
             .AddReverseProxy()
             .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
-
-        // ---------------------------------------------------------------------------
-        // Logging
-        // ---------------------------------------------------------------------------
-        //_ = builder.Logging.ClearProviders();
-        //_ = builder.Logging.AddSimpleConsole(o =>
-        //{
-        //    o.TimestampFormat = "HH:mm:ss ";
-        //});
-        //_ = builder.Logging.SetMinimumLevel(LogLevel.Trace);
 
         var app = builder.Build();
 
