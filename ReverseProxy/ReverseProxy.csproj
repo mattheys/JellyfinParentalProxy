@@ -8,6 +8,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Domain\Domain.csproj" />
+    <ProjectReference Include="..\DatabaseService\DatabaseService.csproj" />
+    <ProjectReference Include="..\SettingsService\SettingsService.csproj" />
   </ItemGroup>
 
   <ItemGroup>

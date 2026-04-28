@@ -16,7 +16,7 @@ public sealed class ProxyOptions
 
     public int TmdbRetryHours { get; set; } = 24;
 
-    public string CachePath { get; set; } = "rating_cache.db";
+    public string DatabasePath { get; set; } = "rating_cache.db";
 
     public int LogBufferSize { get; set; } = 500;
 

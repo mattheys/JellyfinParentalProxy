@@ -51,12 +51,6 @@ public class Program
         _ = webAdminApp.MapRazorComponents<App>()
                         .AddInteractiveServerRenderMode();
 
-        var apiGroup = webAdminApp.MapGroup("/api/bypass");
-        apiGroup.MapGet("/", (IBypassService b) => b.GetBypassState);
-        apiGroup.MapPost("/enable", (IBypassService b) => b.SetBypassState(true));
-        apiGroup.MapPost("/disable", (IBypassService b) => b.SetBypassState(false));
-        apiGroup.MapPost("/toggle", (IBypassService b) => b.SetBypassState(!b.GetBypassState));
-
         // Bind ports
         reverseProxyApp.Urls.Clear();
         reverseProxyApp.Urls.Add("http://*:5000");
