@@ -1,0 +1,13 @@
+.git
+.github
+.vs
+**/bin
+**/obj
+**/TestResults
+rating_cache.db
+WebAdmin/rating_cache.db
+dist
+*.user
+*.suo
+*.swp
+*.tmp

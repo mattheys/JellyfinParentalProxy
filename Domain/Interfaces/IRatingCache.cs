@@ -31,16 +31,30 @@ public interface IRatingCache
     // ── Write ────────────────────────────────────────────────────────────────
 
     /// <summary>Stores a successfully resolved rating from TMDB.</summary>
-    Task StoreRatingAsync(string jellyfinId, AgeRating rating, string? itemName = null, string? itemType = null);
+    Task StoreRatingAsync(
+        string jellyfinId,
+        AgeRating rating,
+        string? itemName = null,
+        string? itemType = null,
+        string? parentSeriesId = null);
 
     /// <summary>Records that a TMDB lookup was attempted but yielded no result.</summary>
-    Task RecordFailedLookupAsync(string jellyfinId);
+    Task RecordFailedLookupAsync(
+        string jellyfinId,
+        string? itemName = null,
+        string? itemType = null,
+        string? parentSeriesId = null);
 
     /// <summary>
     /// Stores a manually-set rating override from the admin UI.
     /// Manual overrides are never overwritten by automatic TMDB lookups.
     /// </summary>
-    Task StoreManualOverrideAsync(string jellyfinId, AgeRating rating, string? itemName = null, string? itemType = null);
+    Task StoreManualOverrideAsync(
+        string jellyfinId,
+        AgeRating rating,
+        string? itemName = null,
+        string? itemType = null,
+        string? parentSeriesId = null);
 
     /// <summary>Removes a manual override so automatic lookup can resume.</summary>
     Task RemoveOverrideAsync(string jellyfinId);

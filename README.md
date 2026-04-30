@@ -51,6 +51,18 @@ All settings are readable from `appsettings.json` **or** environment variables (
 | `TmdbQueueCapacity`   | `TMDB_QUEUE_CAPACITY` | `500`                | Max queued TMDB lookups (oldest dropped when full) |
 | `CachePath`           | `CACHE_PATH`          | `rating_cache.db`    | Path to SQLite file |
 
+### Configuration Service
+
+A database-backed configuration service has been added that stores settings in SQLite. This service can be used to dynamically store and load configuration values during runtime, with the persistence of settings in a SQLite database.
+
+The configuration service implements the `IConfigurationService` interface and provides the following functionality:
+- `GetValue(key, defaultValue)` - Gets a configuration value by key with fallback to default
+- `SetValueAsync(key, value)` - Sets a configuration value to be persisted
+- `DeleteValueAsync(key)` - Removes a configuration value
+- `GetAllValuesAsync()` - Gets all configuration values
+
+The service is available through dependency injection with the `IConfigurationService` interface.
+
 ---
 
 ## Running with Docker
@@ -83,6 +95,8 @@ The **Rating Cache** page (`/ratings`) shows every item the proxy has seen:
 
 To override a rating: click the ✏️ icon, pick a rating, and click **Apply Override**.  
 To remove an override and allow automatic re-lookup: click the 🔄 icon.
+
+Episodes and seasons inherit their series rating and are not manually overrideable directly.
 
 ---
 

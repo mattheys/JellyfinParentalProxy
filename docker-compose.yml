@@ -1,0 +1,25 @@
+services:
+  jellyfin-parental-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jellyfin-parental-proxy:test
+    container_name: jellyfin-parental-proxy-test
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      JELLYFIN_URL: ${JELLYFIN_URL:-http://host.docker.internal:8096}
+      MAX_RATING: ${MAX_RATING:-PG-13}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      TMDB_REGION: ${TMDB_REGION:-US}
+      TMDB_RETRY_HOURS: ${TMDB_RETRY_HOURS:-24}
+      TMDB_WORKER_COUNT: ${TMDB_WORKER_COUNT:-2}
+      TMDB_QUEUE_CAPACITY: ${TMDB_QUEUE_CAPACITY:-500}
+      CACHE_PATH: /data/rating_cache.db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    tmpfs:
+      - /data

@@ -1,5 +1,6 @@
 using Domain.Interfaces;
 using MudBlazor.Services;
+using Microsoft.AspNetCore.Mvc;
 using WebAdmin.Components;
 
 namespace WebAdmin;
@@ -28,6 +29,12 @@ public class Program
         var sharedCache = reverseProxyApp.Services.GetRequiredService<IRatingCache>();
         _ = builder.Services.AddSingleton(sharedCache);
 
+        var sharedBypass = reverseProxyApp.Services.GetRequiredService<IBypassService>();
+        _ = builder.Services.AddSingleton(sharedBypass);
+
+        var sharedConfiguration = reverseProxyApp.Services.GetRequiredService<IConfigurationService>();
+        _ = builder.Services.AddSingleton(sharedConfiguration);
+
         _ = builder.Logging.ClearProviders();
         _ = builder.Logging.AddSimpleConsole(o =>
         {
@@ -46,16 +53,17 @@ public class Program
         }
 
         _ = webAdminApp.UseHttpsRedirection();
+        _ = webAdminApp.UseStaticFiles();
         _ = webAdminApp.UseAntiforgery();
         _ = webAdminApp.MapStaticAssets();
         _ = webAdminApp.MapRazorComponents<App>()
                         .AddInteractiveServerRenderMode();
 
         var apiGroup = webAdminApp.MapGroup("/api/bypass");
-        apiGroup.MapGet("/", (IBypassService b) => b.GetBypassState);
-        apiGroup.MapPost("/enable", (IBypassService b) => b.SetBypassState(true));
-        apiGroup.MapPost("/disable", (IBypassService b) => b.SetBypassState(false));
-        apiGroup.MapPost("/toggle", (IBypassService b) => b.SetBypassState(!b.GetBypassState));
+        apiGroup.MapGet("/", ([FromServices] IBypassService b) => b.GetBypassState);
+        apiGroup.MapPost("/enable", ([FromServices] IBypassService b) => b.SetBypassState(true));
+        apiGroup.MapPost("/disable", ([FromServices] IBypassService b) => b.SetBypassState(false));
+        apiGroup.MapPost("/toggle", ([FromServices] IBypassService b) => b.SetBypassState(!b.GetBypassState));
 
         // Bind ports
         reverseProxyApp.Urls.Clear();

@@ -30,9 +30,10 @@ public sealed class RatingCache : IRatingCache
         string? ItemName,
         string? ItemType,
         int IsManualOverride,      // SQLite has no bool; 0/1
-        long? LastTmdbAttemptUnix
+        long? LastTmdbAttemptUnix,
+        string? ParentSeriesId
     )
-    { public CacheRow() : this(default, default, default, default, default, default) { } }
+    { public CacheRow() : this(string.Empty, string.Empty, default, default, default, default, default) { } }
 
     // -------------------------------------------------------------------------
     // Fields
@@ -75,12 +76,15 @@ public sealed class RatingCache : IRatingCache
                 ItemName            TEXT,
                 ItemType            TEXT,
                 IsManualOverride    INTEGER NOT NULL DEFAULT 0,
-                LastTmdbAttemptUnix INTEGER
+                LastTmdbAttemptUnix INTEGER,
+                ParentSeriesId      TEXT
             );
             """);
 
+        await EnsureColumnExistsAsync(conn, "ParentSeriesId", "TEXT");
+
         var rows = await conn.QueryAsync<CacheRow>(
-            "SELECT JellyfinId, Rating, ItemName, ItemType, IsManualOverride, LastTmdbAttemptUnix FROM RatingCache");
+            "SELECT JellyfinId, Rating, ItemName, ItemType, IsManualOverride, LastTmdbAttemptUnix, ParentSeriesId FROM RatingCache");
 
         foreach (var row in rows)
             _map[row.JellyfinId] = row;
@@ -121,6 +125,7 @@ public sealed class RatingCache : IRatingCache
                 JellyfinId:      row.JellyfinId,
                 ItemName:        row.ItemName,
                 ItemType:        row.ItemType,
+                ParentSeriesId:  row.ParentSeriesId,
                 Rating:          Enum.TryParse<AgeRating>(row.Rating, out var r) ? r : AgeRating.Unrated,
                 IsManualOverride:row.IsManualOverride == 1,
                 IsPendingLookup: row.LastTmdbAttemptUnix.HasValue && row.IsManualOverride == 0,
@@ -135,8 +140,12 @@ public sealed class RatingCache : IRatingCache
     // IRatingCache — Write
     // -------------------------------------------------------------------------
 
-    public async Task StoreRatingAsync(string jellyfinId, AgeRating rating,
-        string? itemName = null, string? itemType = null)
+    public async Task StoreRatingAsync(
+        string jellyfinId,
+        AgeRating rating,
+        string? itemName = null,
+        string? itemType = null,
+        string? parentSeriesId = null)
     {
         // Don't overwrite a manual override with an automatic one
         if (_map.TryGetValue(jellyfinId, out var existing) && existing.IsManualOverride == 1)
@@ -149,31 +158,45 @@ public sealed class RatingCache : IRatingCache
             itemName ?? existing?.ItemName,
             itemType ?? existing?.ItemType,
             IsManualOverride: 0,
-            LastTmdbAttemptUnix: null);
+            LastTmdbAttemptUnix: null,
+            ParentSeriesId: parentSeriesId ?? existing?.ParentSeriesId);
 
         _map[jellyfinId] = row;
         await UpsertAsync(row);
+
+        if (string.Equals(row.ItemType, "Series", StringComparison.OrdinalIgnoreCase))
+            await PropagateSeriesRatingAsync(row.JellyfinId, rating, isManualOverride: false);
+
         _log.LogInformation("Cached rating {Rating} for Jellyfin item {Id}", rating, jellyfinId);
     }
 
-    public async Task RecordFailedLookupAsync(string jellyfinId)
+    public async Task RecordFailedLookupAsync(
+        string jellyfinId,
+        string? itemName = null,
+        string? itemType = null,
+        string? parentSeriesId = null)
     {
         _map.TryGetValue(jellyfinId, out var existing);
 
         var row = new CacheRow(
             jellyfinId,
             AgeRating.Unrated.ToString(),
-            existing?.ItemName,
-            existing?.ItemType,
+            itemName ?? existing?.ItemName,
+            itemType ?? existing?.ItemType,
             IsManualOverride: 0,
-            DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            parentSeriesId ?? existing?.ParentSeriesId);
 
         _map[jellyfinId] = row;
         await UpsertAsync(row);
     }
 
-    public async Task StoreManualOverrideAsync(string jellyfinId, AgeRating rating,
-        string? itemName = null, string? itemType = null)
+    public async Task StoreManualOverrideAsync(
+        string jellyfinId,
+        AgeRating rating,
+        string? itemName = null,
+        string? itemType = null,
+        string? parentSeriesId = null)
     {
         _map.TryGetValue(jellyfinId, out var existing);
 
@@ -183,10 +206,15 @@ public sealed class RatingCache : IRatingCache
             itemName ?? existing?.ItemName,
             itemType ?? existing?.ItemType,
             IsManualOverride: 1,
-            LastTmdbAttemptUnix: null);
+            LastTmdbAttemptUnix: null,
+            ParentSeriesId: parentSeriesId ?? existing?.ParentSeriesId);
 
         _map[jellyfinId] = row;
         await UpsertAsync(row);
+
+        if (string.Equals(row.ItemType, "Series", StringComparison.OrdinalIgnoreCase))
+            await PropagateSeriesRatingAsync(row.JellyfinId, rating, isManualOverride: true);
+
         _log.LogInformation("Manual override set: {Rating} for Jellyfin item {Id}", rating, jellyfinId);
     }
 
@@ -201,10 +229,14 @@ public sealed class RatingCache : IRatingCache
                 existing.ItemName,
                 existing.ItemType,
                 IsManualOverride: 0,
-                DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                existing.ParentSeriesId);
 
             _map[jellyfinId] = row;
             await UpsertAsync(row);
+
+            if (string.Equals(existing.ItemType, "Series", StringComparison.OrdinalIgnoreCase))
+                await ResetSeriesChildrenForLookupAsync(jellyfinId);
         }
     }
 
@@ -221,20 +253,75 @@ public sealed class RatingCache : IRatingCache
 
             await conn.ExecuteAsync("""
                 INSERT INTO RatingCache
-                    (JellyfinId, Rating, ItemName, ItemType, IsManualOverride, LastTmdbAttemptUnix)
+                    (JellyfinId, Rating, ItemName, ItemType, IsManualOverride, LastTmdbAttemptUnix, ParentSeriesId)
                 VALUES
-                    (@JellyfinId, @Rating, @ItemName, @ItemType, @IsManualOverride, @LastTmdbAttemptUnix)
+                    (@JellyfinId, @Rating, @ItemName, @ItemType, @IsManualOverride, @LastTmdbAttemptUnix, @ParentSeriesId)
                 ON CONFLICT(JellyfinId) DO UPDATE SET
                     Rating              = excluded.Rating,
                     ItemName            = COALESCE(excluded.ItemName, RatingCache.ItemName),
                     ItemType            = COALESCE(excluded.ItemType, RatingCache.ItemType),
                     IsManualOverride    = excluded.IsManualOverride,
-                    LastTmdbAttemptUnix = excluded.LastTmdbAttemptUnix;
+                    LastTmdbAttemptUnix = excluded.LastTmdbAttemptUnix,
+                    ParentSeriesId      = COALESCE(excluded.ParentSeriesId, RatingCache.ParentSeriesId);
                 """, row);
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "Failed to upsert cache entry for {Id}", row.JellyfinId);
         }
+    }
+
+    private async Task PropagateSeriesRatingAsync(string seriesId, AgeRating rating, bool isManualOverride)
+    {
+        var affectedChildren = _map.Values
+            .Where(row => string.Equals(row.ParentSeriesId, seriesId, StringComparison.OrdinalIgnoreCase)
+                && (isManualOverride || row.IsManualOverride == 0))
+            .Select(row => new CacheRow(
+                row.JellyfinId,
+                rating.ToString(),
+                row.ItemName,
+                row.ItemType,
+                isManualOverride ? 1 : 0,
+                LastTmdbAttemptUnix: null,
+                ParentSeriesId: row.ParentSeriesId))
+            .ToList();
+
+        foreach (var childRow in affectedChildren)
+        {
+            _map[childRow.JellyfinId] = childRow;
+            await UpsertAsync(childRow);
+        }
+    }
+
+    private async Task ResetSeriesChildrenForLookupAsync(string seriesId)
+    {
+        var retryAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var affectedChildren = _map.Values
+            .Where(row => string.Equals(row.ParentSeriesId, seriesId, StringComparison.OrdinalIgnoreCase))
+            .Select(row => new CacheRow(
+                row.JellyfinId,
+                AgeRating.Unrated.ToString(),
+                row.ItemName,
+                row.ItemType,
+                IsManualOverride: 0,
+                LastTmdbAttemptUnix: retryAt,
+                ParentSeriesId: row.ParentSeriesId))
+            .ToList();
+
+        foreach (var childRow in affectedChildren)
+        {
+            _map[childRow.JellyfinId] = childRow;
+            await UpsertAsync(childRow);
+        }
+    }
+
+    private static async Task EnsureColumnExistsAsync(SqliteConnection conn, string columnName, string columnType)
+    {
+        var exists = await conn.ExecuteScalarAsync<long>(
+            "SELECT COUNT(*) FROM pragma_table_info('RatingCache') WHERE name = @ColumnName;",
+            new { ColumnName = columnName });
+
+        if (exists == 0)
+            await conn.ExecuteAsync($"ALTER TABLE RatingCache ADD COLUMN {columnName} {columnType};");
     }
 }
