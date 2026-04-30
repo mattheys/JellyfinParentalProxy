@@ -97,6 +97,21 @@ You can set these in Docker environment variables:
 | `TMDB_QUEUE_CAPACITY` | `500` | Max number of queued lookups |
 | `CACHE_PATH` | `rating_cache.db` | Where the local cache is stored |
 
+## Available age ratings and mapping
+
+Use these values for `MAX_RATING` (from least strict to most strict):
+
+| `MAX_RATING` value | Also matches incoming ratings |
+|---|---|
+| `G` | `G`, `TV-Y`, `TV-G`, `TV-Y7` |
+| `PG` | `PG`, `TV-PG` |
+| `PG-13` | `PG-13`, `TV-14` |
+| `R` | `R`, `TV-MA` |
+| `NC-17` | `NC-17`, `X` |
+| `Unrated` | Anything unknown or missing |
+
+If a title has a rating label the proxy does not recognize, it is treated as `Unrated`.
+
 ## TMDB API key: what it is and how to get one
 
 `TMDB_API_KEY` is your personal API key from The Movie Database (TMDB).
