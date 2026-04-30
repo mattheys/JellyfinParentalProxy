@@ -18,7 +18,7 @@ public sealed class ProxyOptions
 
     public int TmdbRetryHours { get; set; } = 24;
 
-    public string DatabasePath { get; set; } = "rating_cache.db";
+    public string DatabasePath { get; set; } = "/data/rating_cache.db";
 
     /// <summary>
     /// Maximum number of concurrent TMDB lookup workers.
