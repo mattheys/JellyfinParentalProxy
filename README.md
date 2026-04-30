@@ -97,6 +97,24 @@ You can set these in Docker environment variables:
 | `TMDB_QUEUE_CAPACITY` | `500` | Max number of queued lookups |
 | `CACHE_PATH` | `rating_cache.db` | Where the local cache is stored |
 
+## TMDB API key: what it is and how to get one
+
+`TMDB_API_KEY` is your personal API key from The Movie Database (TMDB).
+
+The proxy uses it to look up official movie/TV certifications (for example `PG`, `PG-13`, `15`, `18`) so it can decide what to hide based on your `MAX_RATING` setting.
+
+Without this key, the proxy cannot perform rating lookups and the container will not start.
+
+How to get a TMDB API key:
+
+1. Create (or sign in to) a TMDB account at `https://www.themoviedb.org/`
+2. Open your account settings and go to the API section
+3. Request an API key and complete TMDB's short application form
+4. Copy the generated API key value
+5. Put it in your container config as `TMDB_API_KEY=your_real_key`
+
+Keep your key private. Anyone with your key can use your TMDB API quota.
+
 ## Managing manual overrides
 
 Go to `http://your-host:5001/ratings`.
