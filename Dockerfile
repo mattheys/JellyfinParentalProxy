@@ -10,7 +10,7 @@ COPY Domain/Domain.csproj           Domain/
 COPY ReverseProxy/ReverseProxy.csproj ReverseProxy/
 COPY WebAdmin/WebAdmin.csproj       WebAdmin/
 
-RUN dotnet restore
+RUN dotnet restore WebAdmin/WebAdmin.csproj
 
 # Copy source and publish
 COPY . .
