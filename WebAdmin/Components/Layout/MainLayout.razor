@@ -25,7 +25,7 @@
 </div>
 
 @code {
-    private bool _drawerOpen = true;
+    private bool _bypassEnabled;
     private bool _isDarkMode = true;
     private MudTheme? _theme = null;
 
@@ -39,11 +39,14 @@
             PaletteDark = _darkPalette,
             LayoutProperties = new LayoutProperties()
         };
+
+        _bypassEnabled = bypassService.GetBypassState;
     }
 
-    private void DrawerToggle()
+    private void OnBypassChanged(bool enabled)
     {
-        _drawerOpen = !_drawerOpen;
+        _bypassEnabled = enabled;
+        bypassService.SetBypassState(enabled);
     }
 
     private void DarkModeToggle()
@@ -96,5 +99,4 @@
         false => Icons.Material.Outlined.DarkMode,
     };
 }
-
 

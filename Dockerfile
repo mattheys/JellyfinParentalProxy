@@ -14,7 +14,7 @@ RUN dotnet restore
 
 # Copy source and publish
 COPY . .
-RUN dotnet publish WebAdmin/WebAdmin.csproj -c Release -o /app/publish --no-restore
+RUN dotnet publish WebAdmin/WebAdmin.csproj -c Release -o /app/publish
 
 # ============================================================
 #  Runtime stage

@@ -363,3 +363,5 @@ MigrationBackup/
 FodyWeavers.xsd
 /rating_cache.db
 /WebAdmin/rating_cache.db
+
+dist/

@@ -90,6 +90,15 @@ public sealed class TmdbLookupWorker : BackgroundService
 
     private async Task ProcessRequestAsync(TmdbLookupRequest req)
     {
+        if (req.ItemType is "Episode" or "Season")
+        {
+            _log.LogWarning(
+                "Skipping granular TMDB lookup for {Type} '{Name}' ({JellyfinId}); expected parent Series lookup",
+                req.ItemType, req.ItemName, req.JellyfinId);
+            await _cache.RecordFailedLookupAsync(req.JellyfinId, req.ItemName, req.ItemType);
+            return;
+        }
+
         long tmdbId = 0;
         
         if (!long.TryParse(req.TmdbIdStr, out tmdbId))
@@ -100,7 +109,7 @@ public sealed class TmdbLookupWorker : BackgroundService
             _log.LogDebug(
                 "Could not resolve TMDB ID for {Type} '{Name}' ({JellyfinId}). Marking as failed.",
                 req.ItemType, req.ItemName, req.JellyfinId);
-            await _cache.RecordFailedLookupAsync(req.JellyfinId);
+            await _cache.RecordFailedLookupAsync(req.JellyfinId, req.ItemName, req.ItemType);
             return;
         }
 
@@ -108,9 +117,9 @@ public sealed class TmdbLookupWorker : BackgroundService
 
         AgeRating? rating = req.ItemType switch
         {
-            "Movie" or "Trailer"                    => await _tmdb.GetMovieRatingAsync(tmdbId),
-            "Series" or "Episode" or "Program"      => await _tmdb.GetTvRatingAsync(tmdbId),
-            _                                       => null,
+            "Movie" or "Trailer" => await _tmdb.GetMovieRatingAsync(tmdbId),
+            "Series" or "Program" => await _tmdb.GetTvRatingAsync(tmdbId),
+            _ => null,
         };
 
         if (rating.HasValue)
@@ -126,7 +135,7 @@ public sealed class TmdbLookupWorker : BackgroundService
                 "TMDB found no rating for {Type} '{Name}' (tmdb_id={TmdbId})",
                 req.ItemType, req.ItemName, tmdbId);
 
-            await _cache.RecordFailedLookupAsync(req.JellyfinId);
+            await _cache.RecordFailedLookupAsync(req.JellyfinId, req.ItemName, req.ItemType);
         }
     }
 

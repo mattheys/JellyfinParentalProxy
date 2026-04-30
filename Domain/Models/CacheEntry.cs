@@ -7,6 +7,7 @@ public sealed record CacheEntry(
     string  JellyfinId,
     string? ItemName,
     string? ItemType,
+    string? ParentSeriesId,
     AgeRating Rating,
     bool    IsManualOverride,
     bool    IsPendingLookup,

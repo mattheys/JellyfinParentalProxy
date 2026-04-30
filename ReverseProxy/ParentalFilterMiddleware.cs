@@ -19,8 +19,7 @@ namespace ReverseProxy;
 ///   2. For unrated items checks the local cache for a TMDB-resolved rating.
 ///   3. Enqueues background TMDB lookups (via <see cref="ITmdbLookupQueue"/>) for
 ///      items that have never been seen or whose retry cooldown has expired.
-///   4. For Episodes and Seasons, falls back to the parent Series rating when no
-///      individual rating is available.
+///   4. For Episodes and Seasons, always uses the parent Series rating.
 /// </summary>
 public sealed class ParentalFilterMiddleware
 {
@@ -33,7 +32,8 @@ public sealed class ParentalFilterMiddleware
         { "Episode", "Season" };
 
     private readonly RequestDelegate                    _next;
-    private readonly AgeRating                          _maxAllowed;
+    private readonly IConfigurationService              _configurationService;
+    private readonly string                             _defaultMaxRating;
     private readonly IRatingCache                       _cache;
     private readonly ITmdbLookupQueue                   _queue;
     private readonly IHttpClientFactory                 _httpClientFactory;
@@ -44,6 +44,7 @@ public sealed class ParentalFilterMiddleware
     public ParentalFilterMiddleware(
         RequestDelegate                    next,
         IOptions<ProxyOptions>             options,
+        IConfigurationService              configurationService,
         IRatingCache                       cache,
         ITmdbLookupQueue                   queue,
         IBypassService                     bypassService,
@@ -51,13 +52,14 @@ public sealed class ParentalFilterMiddleware
         ILogger<ParentalFilterMiddleware>  log)
     {
         _next              = next;
+        _configurationService = configurationService;
+        _defaultMaxRating  = options.Value.MaxRating;
         _cache             = cache;
         _queue             = queue;
         _httpClientFactory = httpClientFactory;
         _jellyfinUrl       = options.Value.JellyfinUrl;
         _bypassService     = bypassService;
         _log               = log;
-        _maxAllowed        = AgeRatingParser.Parse(options.Value.MaxRating);
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -195,59 +197,100 @@ public sealed class ParentalFilterMiddleware
         if (!MediaTypes.Contains(itemType))
             return true;
 
-        var jellyfinId     = item["Id"]?.GetValue<string>()             ?? string.Empty;
+        var jellyfinId = item["Id"]?.GetValue<string>() ?? string.Empty;
+        var itemName = item["Name"]?.GetValue<string>() ?? "Unknown";
         var jellyfinRating = item["OfficialRating"]?.GetValue<string>();
-        var parsedRating   = AgeRatingParser.Parse(jellyfinRating);
-        var isUnrated      = parsedRating == AgeRating.Unrated;
+        var parsedRating = AgeRatingParser.Parse(jellyfinRating);
 
         // --- Determine the effective rating ---
 
-        AgeRating effectiveRating;
+        AgeRating effectiveRating = AgeRating.Unrated;
+        string? parentSeriesId = null;
+        string? parentSeriesName = null;
 
-        if (!isUnrated)
+        if (SeriesChildTypes.Contains(itemType))
         {
-            // The item carries its own Jellyfin rating — use it directly.
+            parentSeriesId = item["SeriesId"]?.GetValue<string>()
+                ?? item["ParentId"]?.GetValue<string>();
+            parentSeriesName = item["SeriesName"]?.GetValue<string>() ?? "Unknown Series";
+
+            if (parsedRating != AgeRating.Unrated)
+            {
+                effectiveRating = parsedRating;
+            }
+            else
+            {
+                var seriesResolution = await ResolveSeriesRatingAsync(item, authHeader);
+                effectiveRating = seriesResolution.Rating;
+                parentSeriesId = seriesResolution.SeriesId;
+                parentSeriesName = seriesResolution.SeriesName;
+            }
+
+            if (effectiveRating != AgeRating.Unrated && !string.IsNullOrEmpty(jellyfinId))
+            {
+                await _cache.StoreRatingAsync(
+                    jellyfinId,
+                    effectiveRating,
+                    itemName,
+                    itemType,
+                    parentSeriesId);
+            }
+        }
+        else if (parsedRating != AgeRating.Unrated)
+        {
             effectiveRating = parsedRating;
+            if (!string.IsNullOrEmpty(jellyfinId))
+                await _cache.StoreRatingAsync(jellyfinId, parsedRating, itemName, itemType);
         }
         else if (!string.IsNullOrEmpty(jellyfinId) &&
                  _cache.GetRating(jellyfinId) is AgeRating cached)
         {
-            // We have a cached (TMDB-resolved or manual) rating.
             effectiveRating = cached;
-        }
-        else if (SeriesChildTypes.Contains(itemType))
-        {
-            // Episode / Season with no individual rating — try the parent Series.
-            effectiveRating = await ResolveSeriesRatingAsync(item, authHeader);
-        }
-        else
-        {
-            effectiveRating = AgeRating.Unrated;
         }
 
         // --- Enqueue a TMDB lookup if still unresolved ---
 
-        if (effectiveRating == AgeRating.Unrated
-            && !string.IsNullOrEmpty(jellyfinId)
-            && _cache.ShouldLookup(jellyfinId))
+        if (effectiveRating == AgeRating.Unrated)
         {
-            // For episodes/seasons, look up the parent Series ID on TMDB.
-            // For everything else, look up by the item's own TMDB ID.
-            var tmdbIdStr = item["ProviderIds"]?["Tmdb"]?.GetValue<string>();
-            var itemName  = item["Name"]?.GetValue<string>() ?? "Unknown";
+            if (SeriesChildTypes.Contains(itemType)
+                && !string.IsNullOrEmpty(parentSeriesId)
+                && _cache.ShouldLookup(parentSeriesId))
+            {
+                var seriesTmdbId = item["SeriesProviderIds"]?["Tmdb"]?.GetValue<string>()
+                    ?? item["ProviderIds"]?["Tmdb"]?.GetValue<string>();
+                var lookupName = parentSeriesName ?? "Unknown Series";
 
-            _queue.TryEnqueue(new TmdbLookupRequest(
-                jellyfinId, tmdbIdStr, itemType, itemName, authHeader));
+                _queue.TryEnqueue(new TmdbLookupRequest(
+                    parentSeriesId,
+                    seriesTmdbId,
+                    "Series",
+                    lookupName,
+                    authHeader));
+            }
+            else if (!SeriesChildTypes.Contains(itemType)
+                && !string.IsNullOrEmpty(jellyfinId)
+                && _cache.ShouldLookup(jellyfinId))
+            {
+                var tmdbIdStr = item["ProviderIds"]?["Tmdb"]?.GetValue<string>();
+
+                _queue.TryEnqueue(new TmdbLookupRequest(
+                    jellyfinId,
+                    tmdbIdStr,
+                    itemType,
+                    itemName,
+                    authHeader));
+            }
         }
 
-        var allowed = effectiveRating <= _maxAllowed;
+        var maxAllowed = GetCurrentMaxAllowed();
+        var allowed = effectiveRating <= maxAllowed;
 
         if (!allowed)
         {
             _log.LogDebug(
                 "Blocked {Type} '{Name}' (id={Id}) — effective rating {Rating}",
                 itemType,
-                item["Name"]?.GetValue<string>() ?? "Unknown",
+                itemName,
                 jellyfinId,
                 effectiveRating);
         }
@@ -255,48 +298,46 @@ public sealed class ParentalFilterMiddleware
         return allowed;
     }
 
+    private AgeRating GetCurrentMaxAllowed()
+    {
+        var configuredMaxRating = _configurationService.GetValue(nameof(ProxyOptions.MaxRating), _defaultMaxRating);
+        return AgeRatingParser.Parse(configuredMaxRating);
+    }
+
     // -------------------------------------------------------------------------
     // Series rating inheritance
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// For an Episode or Season, tries to resolve the rating via:
+    /// For an Episode or Season, resolves the rating via:
     ///   1. The SeriesId field on the item itself (cache lookup).
-    ///   2. Falling back to the item's own Jellyfin OfficialRating (already
-    ///      checked as Unrated at this point, so this is a no-op guard).
+    ///   2. Jellyfin series metadata.
     /// </summary>
-    private async Task<AgeRating> ResolveSeriesRatingAsync(JsonNode item, string authHeader)
+    private async Task<(AgeRating Rating, string? SeriesId, string? SeriesName)> ResolveSeriesRatingAsync(
+        JsonNode item,
+        string authHeader)
     {
-        // Jellyfin typically populates SeriesId on Episode items.
-        var seriesId = item["SeriesId"]?.GetValue<string>();
+        var seriesId = item["SeriesId"]?.GetValue<string>()
+            ?? item["ParentId"]?.GetValue<string>();
+        var seriesName = item["SeriesName"]?.GetValue<string>() ?? "Unknown Series";
 
-        if (!string.IsNullOrEmpty(seriesId))
+        if (string.IsNullOrEmpty(seriesId))
+            return (AgeRating.Unrated, null, seriesName);
+
+        // Check the cache first (fast path — no network call)
+        if (_cache.GetRating(seriesId) is AgeRating cachedSeriesRating)
+            return (cachedSeriesRating, seriesId, seriesName);
+
+        // Not cached — try to fetch the Series item from Jellyfin and cache it
+        var seriesRating = await FetchSeriesRatingFromJellyfinAsync(seriesId, authHeader);
+
+        if (seriesRating != AgeRating.Unrated)
         {
-            // Check the cache first (fast path — no network call)
-            if (_cache.GetRating(seriesId) is AgeRating cachedSeriesRating)
-                return cachedSeriesRating;
-
-            // Not cached — try to fetch the Series item from Jellyfin and cache it
-            var seriesName   = item["SeriesName"]?.GetValue<string>() ?? "Unknown Series";
-            var seriesRating = await FetchSeriesRatingFromJellyfinAsync(seriesId, authHeader);
-
-            if (seriesRating != AgeRating.Unrated)
-            {
-                // Cache the Jellyfin-supplied rating so subsequent episode/season
-                // requests for the same series are served from memory.
-                await _cache.StoreRatingAsync(seriesId, seriesRating, seriesName, "Series");
-                return seriesRating;
-            }
-
-            // Jellyfin had no rating either — enqueue a TMDB lookup for the Series
-            if (_cache.ShouldLookup(seriesId))
-            {
-                _queue.TryEnqueue(new TmdbLookupRequest(
-                    seriesId, null, "Series", seriesName, authHeader));
-            }
+            await _cache.StoreRatingAsync(seriesId, seriesRating, seriesName, "Series");
+            return (seriesRating, seriesId, seriesName);
         }
 
-        return AgeRating.Unrated;
+        return (AgeRating.Unrated, seriesId, seriesName);
     }
 
     private async Task<AgeRating> FetchSeriesRatingFromJellyfinAsync(

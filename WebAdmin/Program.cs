@@ -1,5 +1,6 @@
 using Domain.Interfaces;
 using MudBlazor.Services;
+using Microsoft.AspNetCore.Mvc;
 using WebAdmin.Components;
 
 namespace WebAdmin;
@@ -28,6 +29,12 @@ public class Program
         var sharedBypass = reverseProxyApp.Services.GetRequiredService<IBypassService>();
         _ = builder.Services.AddSingleton(sharedCache);
         _ = builder.Services.AddSingleton(sharedBypass);
+
+        var sharedBypass = reverseProxyApp.Services.GetRequiredService<IBypassService>();
+        _ = builder.Services.AddSingleton(sharedBypass);
+
+        var sharedConfiguration = reverseProxyApp.Services.GetRequiredService<IConfigurationService>();
+        _ = builder.Services.AddSingleton(sharedConfiguration);
 
         _ = builder.Logging.ClearProviders();
         _ = builder.Logging.AddSimpleConsole(o =>
