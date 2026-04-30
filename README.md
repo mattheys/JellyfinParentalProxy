@@ -67,6 +67,16 @@ The service is available through dependency injection with the `IConfigurationSe
 
 ## Running with Docker
 
+Prebuilt images are published to GitHub Container Registry (GHCR):
+
+- `ghcr.io/mattheys/jellyfinparentalproxy:latest`
+
+If your package visibility is private, log in first with a token that has `read:packages`:
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
 ```bash
 docker run -d \
   -p 5000:5000 \
@@ -77,11 +87,39 @@ docker run -d \
   -e TMDB_REGION=GB \
   -v jellyfin-proxy-data:/data \
   --name jellyfin-proxy \
-  jellyfinparentalproxy
+  ghcr.io/mattheys/jellyfinparentalproxy:latest
 ```
 
 Point your Jellyfin clients at `:5000` instead of Jellyfin directly.  
 Open the admin UI at `http://your-host:5001/ratings`.
+
+### Running with Docker Compose
+
+The included `docker-compose.yml` now pulls from GHCR by default.
+
+```bash
+docker compose up -d
+```
+
+Optional overrides:
+
+- `IMAGE_NAME=ghcr.io/mattheys/jellyfinparentalproxy`
+- `IMAGE_TAG=latest`
+
+Example:
+
+```bash
+IMAGE_TAG=v1.0.0 docker compose up -d
+```
+
+### Publishing images to GHCR (maintainers)
+
+This repository includes `.github/workflows/docker-publish.yml`.
+
+- Push to `main` publishes `latest` and a `sha-` tag
+- Push a version tag (for example `v1.2.3`) publishes a matching image tag
+
+You can then pull the image from `ghcr.io/<owner>/jellyfinparentalproxy:<tag>`.
 
 ---
 

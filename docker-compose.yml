@@ -1,10 +1,8 @@
 services:
   jellyfin-parental-proxy:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: jellyfin-parental-proxy:test
-    container_name: jellyfin-parental-proxy-test
+    image: ${IMAGE_NAME:-ghcr.io/mattheys/jellyfinparentalproxy}:${IMAGE_TAG:-latest}
+    container_name: jellyfin-parental-proxy
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "5000:5000"
@@ -21,5 +19,9 @@ services:
       CACHE_PATH: /data/rating_cache.db
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    tmpfs:
-      - /data
+
+    volumes:
+      - jellyfin-proxy-data:/data
+
+volumes:
+  jellyfin-proxy-data:
