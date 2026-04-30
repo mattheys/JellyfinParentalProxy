@@ -95,7 +95,7 @@ You can set these in Docker environment variables:
 | `TMDB_RETRY_HOURS` | `24` | Wait time before retrying failed lookups |
 | `TMDB_WORKER_COUNT` | `2` | How many rating lookups can run at once |
 | `TMDB_QUEUE_CAPACITY` | `500` | Max number of queued lookups |
-| `CACHE_PATH` | `rating_cache.db` | Where the local cache is stored |
+| `CACHE_PATH` | `/data/rating_cache.db` | Where the local cache is stored (inside the mounted Docker volume) |
 
 ## Available age ratings and mapping
 
