@@ -33,6 +33,8 @@ Public image:
 
 Run it:
 
+`TMDB_API_KEY` is required. The container will not start without it.
+
 ```bash
 docker run -d \
   --name jellyfin-proxy \
@@ -88,7 +90,7 @@ You can set these in Docker environment variables:
 |---|---|---|
 | `JELLYFIN_URL` | `http://127.0.0.1:8096` | Address of your existing Jellyfin server |
 | `MAX_RATING` | `PG-13` | Highest rating you want to allow |
-| `TMDB_API_KEY` | empty | Optional key for better rating lookups |
+| `TMDB_API_KEY` | _(required)_ | Required TMDB API key; container will not start without it |
 | `TMDB_REGION` | `US` | Country/region used when looking up ratings |
 | `TMDB_RETRY_HOURS` | `24` | Wait time before retrying failed lookups |
 | `TMDB_WORKER_COUNT` | `2` | How many rating lookups can run at once |
