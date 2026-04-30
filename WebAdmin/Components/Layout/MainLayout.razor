@@ -25,6 +25,8 @@
 </div>
 
 @code {
+    [Inject] private IBypassService BypassService { get; set; } = default!;
+
     private bool _bypassEnabled;
     private bool _isDarkMode = true;
     private MudTheme? _theme = null;
@@ -40,13 +42,13 @@
             LayoutProperties = new LayoutProperties()
         };
 
-        _bypassEnabled = bypassService.GetBypassState;
+        _bypassEnabled = BypassService.GetBypassState;
     }
 
     private void OnBypassChanged(bool enabled)
     {
         _bypassEnabled = enabled;
-        bypassService.SetBypassState(enabled);
+        BypassService.SetBypassState(enabled);
     }
 
     private void DarkModeToggle()
@@ -99,4 +101,3 @@
         false => Icons.Material.Outlined.DarkMode,
     };
 }
-

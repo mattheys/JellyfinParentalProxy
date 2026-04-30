@@ -33,7 +33,7 @@ public sealed class RatingCache : IRatingCache
         long? LastTmdbAttemptUnix,
         string? ParentSeriesId
     )
-    { public CacheRow() : this(string.Empty, string.Empty, null, null, 0, null) { } }
+    { public CacheRow() : this(string.Empty, string.Empty, null, null, 0, null, null) { } }
 
     // -------------------------------------------------------------------------
     // Fields

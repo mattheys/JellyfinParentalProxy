@@ -30,9 +30,6 @@ public class Program
         _ = builder.Services.AddSingleton(sharedCache);
         _ = builder.Services.AddSingleton(sharedBypass);
 
-        var sharedBypass = reverseProxyApp.Services.GetRequiredService<IBypassService>();
-        _ = builder.Services.AddSingleton(sharedBypass);
-
         var sharedConfiguration = reverseProxyApp.Services.GetRequiredService<IConfigurationService>();
         _ = builder.Services.AddSingleton(sharedConfiguration);
 

@@ -20,7 +20,7 @@ public sealed class ConfigurationService : IConfigurationService
     public ConfigurationService(IOptions<ProxyOptions> options, ILogger<ConfigurationService> log)
     {
         var opts = options.Value;
-        _connectionString = $"Data Source={opts.CachePath};Cache=Shared;";
+        _connectionString = $"Data Source={opts.DatabasePath};Cache=Shared;";
         _log = log;
         _cache = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }

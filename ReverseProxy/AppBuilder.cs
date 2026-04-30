@@ -1,13 +1,13 @@
-using Domain;
 using Domain.Interfaces;
-using SettingsService;
+using Domain.Models;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Domain.Models;
+using SettingsService;
+using Yarp.ReverseProxy.Configuration;
 
 namespace ReverseProxy;
 
@@ -26,7 +26,7 @@ public static class AppBuilder
         var bootstrapOptions = new ProxyOptions();
         builder.Configuration.Bind(bootstrapOptions);
 
-        var dbOverrides = await LoadDatabaseOverridesAsync(bootstrapOptions.CachePath);
+        var dbOverrides = await LoadDatabaseOverridesAsync(bootstrapOptions.DatabasePath);
         if (dbOverrides.Count > 0)
             _ = builder.Configuration.AddInMemoryCollection(dbOverrides);
 
@@ -34,7 +34,7 @@ public static class AppBuilder
             _ = builder.Configuration.AddInMemoryCollection(envOverrides);
 
         _ = builder.Services.Configure<ProxyOptions>(builder.Configuration);
-        
+
         var defaultOptions = new ProxyOptions();
         builder.Configuration.Bind(defaultOptions);
 
@@ -50,41 +50,31 @@ public static class AppBuilder
         // ---------------------------------------------------------------------------
         // Application services
         // ---------------------------------------------------------------------------
-        
-        // Register ProxyOptions as a service so SettingsManager can resolve it
         _ = builder.Services.AddSingleton(defaultOptions);
 
-        // Database Service
         _ = builder.Services.AddSingleton<IDatabaseService>(sp =>
         {
             var options = sp.GetRequiredService<IOptions<ProxyOptions>>().Value;
             return new DatabaseService.DatabaseService(options.DatabasePath);
         });
 
-        // Settings Service
         _ = builder.Services.AddSingleton<ISettingsService, SettingsManager>();
-        
-        // Cache — singleton, implements IRatingCache (used by both proxy and WebAdmin)
+        _ = builder.Services.AddSingleton<ConfigurationService>();
+        _ = builder.Services.AddSingleton<IConfigurationService>(sp => sp.GetRequiredService<ConfigurationService>());
+
         _ = builder.Services.AddSingleton<RatingCache>();
         _ = builder.Services.AddSingleton<IRatingCache>(sp => sp.GetRequiredService<RatingCache>());
 
-        // Bypass toggle — singleton shared with WebAdmin via explicit service extraction
         _ = builder.Services.AddSingleton<BypassService>();
         _ = builder.Services.AddSingleton<IBypassService>(sp => sp.GetRequiredService<BypassService>());
 
-        // TMDB helpers
         _ = builder.Services.AddSingleton<TmdbService>();
 
-        // Bounded lookup queue — replaces fire-and-forget Task.Run
         _ = builder.Services.AddSingleton<TmdbLookupQueue>();
         _ = builder.Services.AddSingleton<ITmdbLookupQueue>(sp => sp.GetRequiredService<TmdbLookupQueue>());
 
-        // Background hosted services
         _ = builder.Services.AddHostedService<TmdbLookupWorker>();
         _ = builder.Services.AddHostedService<CacheFlushService>();
-
-        // Bypass service
-        _ = builder.Services.AddSingleton<IBypassService, BypassService>();
 
         // ---------------------------------------------------------------------------
         // YARP reverse proxy (configured in code)
@@ -120,24 +110,14 @@ public static class AppBuilder
 
         var app = builder.Build();
 
-        // Initialise SQLite (creates tables / runs migrations)
-        var cache = app.Services.GetRequiredService<RatingCache>();
-        await cache.InitialiseAsync();
-        
-        // Initialise configuration service - this loads database values
-        var config = app.Services.GetRequiredService<ConfigurationService>();
-        await config.InitializeAsync();
-
-        var app = builder.Build();
-
-        // Initialize database settings
+        // Initialize settings/config/cache after app services are available.
         var settingsService = app.Services.GetRequiredService<ISettingsService>();
         await settingsService.InitializeAsync();
-
-        // Get actual proxy options from settings service instead
         var actualOptions = await settingsService.GetSettingsAsync();
 
-        // Initialise SQLite (creates tables / runs migrations)
+        var config = app.Services.GetRequiredService<IConfigurationService>();
+        await config.InitializeAsync();
+
         var cache = app.Services.GetRequiredService<RatingCache>();
         await cache.InitialiseAsync(actualOptions.DatabasePath);
 
@@ -224,8 +204,7 @@ public static class AppBuilder
         MapEnv(values, nameof(ProxyOptions.TmdbApiKey), "TMDB_API_KEY");
         MapEnv(values, nameof(ProxyOptions.TmdbRegion), "TMDB_REGION");
         MapEnv(values, nameof(ProxyOptions.TmdbRetryHours), "TMDB_RETRY_HOURS");
-        MapEnv(values, nameof(ProxyOptions.CachePath), "CACHE_PATH");
-        MapEnv(values, nameof(ProxyOptions.LogBufferSize), "LOG_BUFFER_SIZE");
+        MapEnv(values, nameof(ProxyOptions.DatabasePath), "CACHE_PATH");
         MapEnv(values, nameof(ProxyOptions.TmdbWorkerCount), "TMDB_WORKER_COUNT");
         MapEnv(values, nameof(ProxyOptions.TmdbQueueCapacity), "TMDB_QUEUE_CAPACITY");
         return values;

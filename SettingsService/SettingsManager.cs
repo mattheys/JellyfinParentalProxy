@@ -31,9 +31,6 @@ public class SettingsManager : ISettingsService
                 ? await _databaseService.GetAsync<int>("TmdbRetryHours") 
                 : _defaultOptions.TmdbRetryHours,
             DatabasePath = await _databaseService.GetAsync<string>("DatabasePath") ?? _defaultOptions.DatabasePath,
-            LogBufferSize = await _databaseService.GetAsync<int>("LogBufferSize") != 0 
-                ? await _databaseService.GetAsync<int>("LogBufferSize") 
-                : _defaultOptions.LogBufferSize,
             TmdbWorkerCount = await _databaseService.GetAsync<int>("TmdbWorkerCount") != 0 
                 ? await _databaseService.GetAsync<int>("TmdbWorkerCount") 
                 : _defaultOptions.TmdbWorkerCount,
@@ -53,7 +50,6 @@ public class SettingsManager : ISettingsService
         await _databaseService.SetAsync("TmdbRegion", options.TmdbRegion);
         await _databaseService.SetAsync("TmdbRetryHours", options.TmdbRetryHours);
         await _databaseService.SetAsync("DatabasePath", options.DatabasePath);
-        await _databaseService.SetAsync("LogBufferSize", options.LogBufferSize);
         await _databaseService.SetAsync("TmdbWorkerCount", options.TmdbWorkerCount);
         await _databaseService.SetAsync("TmdbQueueCapacity", options.TmdbQueueCapacity);
     }
