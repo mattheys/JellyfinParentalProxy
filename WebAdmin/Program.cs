@@ -24,10 +24,11 @@ public class Program
         _ = builder.Services.AddRazorComponents()
                             .AddInteractiveServerComponents();
 
-        // Share the IRatingCache singleton that was registered inside the
-        // reverse proxy's DI container so the WebAdmin UI can read and write it.
-        var sharedCache = reverseProxyApp.Services.GetRequiredService<IRatingCache>();
+        // Share singletons from the reverse proxy's DI container with WebAdmin
+        var sharedCache  = reverseProxyApp.Services.GetRequiredService<IRatingCache>();
+        var sharedBypass = reverseProxyApp.Services.GetRequiredService<IBypassService>();
         _ = builder.Services.AddSingleton(sharedCache);
+        _ = builder.Services.AddSingleton(sharedBypass);
 
         var sharedBypass = reverseProxyApp.Services.GetRequiredService<IBypassService>();
         _ = builder.Services.AddSingleton(sharedBypass);
@@ -47,23 +48,11 @@ public class Program
 
         // HTTP pipeline
         if (!webAdminApp.Environment.IsDevelopment())
-        {
             _ = webAdminApp.UseExceptionHandler("/Error");
-            _ = webAdminApp.UseHsts();
-        }
-
-        _ = webAdminApp.UseHttpsRedirection();
-        _ = webAdminApp.UseStaticFiles();
         _ = webAdminApp.UseAntiforgery();
         _ = webAdminApp.MapStaticAssets();
         _ = webAdminApp.MapRazorComponents<App>()
                         .AddInteractiveServerRenderMode();
-
-        var apiGroup = webAdminApp.MapGroup("/api/bypass");
-        apiGroup.MapGet("/", ([FromServices] IBypassService b) => b.GetBypassState);
-        apiGroup.MapPost("/enable", ([FromServices] IBypassService b) => b.SetBypassState(true));
-        apiGroup.MapPost("/disable", ([FromServices] IBypassService b) => b.SetBypassState(false));
-        apiGroup.MapPost("/toggle", ([FromServices] IBypassService b) => b.SetBypassState(!b.GetBypassState));
 
         // Bind ports
         reverseProxyApp.Urls.Clear();

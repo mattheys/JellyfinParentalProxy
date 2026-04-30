@@ -33,13 +33,13 @@ public sealed class RatingCache : IRatingCache
         long? LastTmdbAttemptUnix,
         string? ParentSeriesId
     )
-    { public CacheRow() : this(string.Empty, string.Empty, default, default, default, default, default) { } }
+    { public CacheRow() : this(string.Empty, string.Empty, null, null, 0, null) { } }
 
     // -------------------------------------------------------------------------
     // Fields
     // -------------------------------------------------------------------------
 
-    private readonly string   _connectionString;
+    private string   _connectionString;
     private readonly TimeSpan _retryCooldown;
     private readonly ILogger<RatingCache> _log;
 
@@ -54,7 +54,7 @@ public sealed class RatingCache : IRatingCache
     public RatingCache(IOptions<ProxyOptions> options, ILogger<RatingCache> log)
     {
         var opts = options.Value;
-        _connectionString = $"Data Source={opts.CachePath};Cache=Shared;";
+        _connectionString = $"Data Source={opts.DatabasePath};Cache=Shared;";
         _retryCooldown    = TimeSpan.FromHours(opts.TmdbRetryHours);
         _log              = log;
     }
@@ -63,8 +63,9 @@ public sealed class RatingCache : IRatingCache
     // Initialisation (called once at startup)
     // -------------------------------------------------------------------------
 
-    public async Task InitialiseAsync()
+    public async Task InitialiseAsync(string databasePath)
     {
+        _connectionString = $"Data Source={databasePath};Cache=Shared;";
         await using var conn = new SqliteConnection(_connectionString);
         await conn.OpenAsync();
 
@@ -120,7 +121,7 @@ public sealed class RatingCache : IRatingCache
 
     public IReadOnlyList<CacheEntry> GetAllEntries()
     {
-        return _map.Values
+        return _map.Values.ToList()
             .Select(row => new CacheEntry(
                 JellyfinId:      row.JellyfinId,
                 ItemName:        row.ItemName,
