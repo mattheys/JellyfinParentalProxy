@@ -155,10 +155,6 @@ public sealed class ParentalFilterMiddleware
             var (filtered, removed) = await FilterArrayAsync(items, authHeader);
             obj["Items"] = filtered;
 
-            if (obj["TotalRecordCount"] is JsonValue totalNode &&
-                totalNode.TryGetValue<int>(out var total))
-                obj["TotalRecordCount"] = Math.Max(0, total - removed);
-
             return (obj, removed > 0);
         }
 
