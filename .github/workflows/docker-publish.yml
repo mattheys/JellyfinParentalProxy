@@ -6,6 +6,9 @@ on:
       - main
     tags:
       - "v*"
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 env:
@@ -36,9 +39,24 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
+            # 1. 'latest' tag for main branch
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
             type=sha
+
+            # 2. Semver tags for v1.x.x and v1
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            
+            # 3. 'develop' tag explicitly for pull requests
+            type=raw,value=develop,enable=${{ github.event_name == 'pull_request' }}
+            
+            # 4. PR specific tags (e.g., pr-2)
+            type=ref,event=pr
+            
+            # 5. Branch name tags for branches other than main (e.g., feature/update-proxy)
+            type=ref,event=branch
 
       - name: Build and push image
         uses: docker/build-push-action@v6
