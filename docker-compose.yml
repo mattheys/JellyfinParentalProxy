@@ -1,6 +1,6 @@
 services:
   jellyfin-parental-proxy:
-    image: ${IMAGE_NAME:-ghcr.io/mattheys/jellyfinparentalproxy}:${IMAGE_TAG:-latest}
+    image: ${IMAGE_NAME:-ghcr.io/mattheys/jellyfinparentalproxy}:${IMAGE_TAG:-main}
     container_name: jellyfin-parental-proxy
     pull_policy: always
     restart: unless-stopped

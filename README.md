@@ -29,7 +29,7 @@ Example URLs after startup:
 
 Public image:
 
-- `ghcr.io/mattheys/jellyfinparentalproxy:latest`
+- `ghcr.io/mattheys/jellyfinparentalproxy:main` (or a version tag like `v1.2.3`)
 
 Run it:
 
@@ -45,7 +45,7 @@ docker run -d \
   -e TMDB_API_KEY=your_tmdb_api_key \
   -e TMDB_REGION=US \
   -v jellyfin-proxy-data:/data \
-  ghcr.io/mattheys/jellyfinparentalproxy:latest
+  ghcr.io/mattheys/jellyfinparentalproxy:main
 ```
 
 After it starts:
@@ -58,7 +58,7 @@ After it starts:
 ```yaml
 services:
   jellyfin-parental-proxy:
-    image: ghcr.io/mattheys/jellyfinparentalproxy:latest
+    image: ghcr.io/mattheys/jellyfinparentalproxy:main
     container_name: jellyfin-proxy
     restart: unless-stopped
     ports:
