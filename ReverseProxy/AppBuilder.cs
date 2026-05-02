@@ -207,6 +207,7 @@ public static class AppBuilder
         MapEnv(values, nameof(ProxyOptions.DatabasePath), "CACHE_PATH");
         MapEnv(values, nameof(ProxyOptions.TmdbWorkerCount), "TMDB_WORKER_COUNT");
         MapEnv(values, nameof(ProxyOptions.TmdbQueueCapacity), "TMDB_QUEUE_CAPACITY");
+        MapEnv(values, nameof(ProxyOptions.RewritePlaybackUrlsToDownstream), "REWRITE_PLAYBACK_URLS_TO_DOWNSTREAM");
         return values;
     }
 }

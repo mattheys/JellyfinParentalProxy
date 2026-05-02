@@ -31,4 +31,6 @@ public sealed class ProxyOptions
     /// Items beyond this limit are dropped until the queue drains.
     /// </summary>
     public int TmdbQueueCapacity { get; set; } = 500;
+
+    public bool RewritePlaybackUrlsToDownstream { get; set; } = false;
 }
