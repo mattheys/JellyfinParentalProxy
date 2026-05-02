@@ -96,6 +96,9 @@ You can set these in Docker environment variables:
 | `TMDB_WORKER_COUNT` | `2` | How many rating lookups can run at once |
 | `TMDB_QUEUE_CAPACITY` | `500` | Max number of queued lookups |
 | `CACHE_PATH` | `/data/rating_cache.db` | Where the local cache is stored (inside the mounted Docker volume) |
+| `REWRITE_PLAYBACK_URLS_TO_DOWNSTREAM` | `false` | If `true`, rewrites playback URLs to point directly at Jellyfin |
+
+The proxy does not buffer media stream routes (`/Videos`, `/Audio`, HLS segments, etc.), so playback bytes are streamed through immediately.
 
 ## Available age ratings and mapping
 

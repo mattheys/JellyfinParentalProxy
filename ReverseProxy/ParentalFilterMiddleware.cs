@@ -31,9 +31,13 @@ public sealed class ParentalFilterMiddleware
     private static readonly HashSet<string> SeriesChildTypes = new(StringComparer.OrdinalIgnoreCase)
         { "Episode", "Season" };
 
+    private static readonly string[] StreamingRoutePrefixes =
+        ["/Videos", "/Audio", "/LiveTv", "/hls", "/Sync"];
+
     private readonly RequestDelegate                    _next;
     private readonly IConfigurationService              _configurationService;
     private readonly string                             _defaultMaxRating;
+    private readonly bool                               _defaultRewritePlaybackUrlsToDownstream;
     private readonly IRatingCache                       _cache;
     private readonly ITmdbLookupQueue                   _queue;
     private readonly IHttpClientFactory                 _httpClientFactory;
@@ -54,6 +58,7 @@ public sealed class ParentalFilterMiddleware
         _next              = next;
         _configurationService = configurationService;
         _defaultMaxRating  = options.Value.MaxRating;
+        _defaultRewritePlaybackUrlsToDownstream = options.Value.RewritePlaybackUrlsToDownstream;
         _cache             = cache;
         _queue             = queue;
         _httpClientFactory = httpClientFactory;
@@ -65,6 +70,17 @@ public sealed class ParentalFilterMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         if (_bypassService.GetBypassState)
+        {
+            await _next(context);
+            return;
+        }
+
+        var path = context.Request.Path.Value ?? string.Empty;
+        var isPlaybackInfoRequest = IsPlaybackInfoRequest(path);
+        var shouldRewritePlaybackUrls = isPlaybackInfoRequest && ShouldRewritePlaybackUrlsToDownstream();
+
+        if (IsStreamingRequest(path)
+            || (!ShouldInspectForFiltering(path) && !shouldRewritePlaybackUrls))
         {
             await _next(context);
             return;
@@ -125,12 +141,23 @@ public sealed class ParentalFilterMiddleware
 
         if (json is not null)
         {
-            var authHeader = context.Request.Headers.Authorization.ToString();
-            var (filtered, wasModified) = await FilterJsonAsync(json, authHeader);
+            JsonNode result = json;
+            var wasModified = false;
+
+            if (ShouldInspectForFiltering(path))
+            {
+                var authHeader = context.Request.Headers.Authorization.ToString();
+                var filtered = await FilterJsonAsync(result, authHeader);
+                result = filtered.Result;
+                wasModified = filtered.WasModified;
+            }
+
+            if (shouldRewritePlaybackUrls)
+                wasModified = RewritePlaybackUrls(result) || wasModified;
 
             if (wasModified)
             {
-                var outBytes = JsonSerializer.SerializeToUtf8Bytes(filtered);
+                var outBytes = JsonSerializer.SerializeToUtf8Bytes(result);
                 context.Response.Headers.Remove("Transfer-Encoding");
                 context.Response.Headers.Remove("Content-Encoding");
                 context.Response.ContentLength = outBytes.Length;
@@ -141,6 +168,89 @@ public sealed class ParentalFilterMiddleware
 
         buffer.Seek(0, SeekOrigin.Begin);
         await buffer.CopyToAsync(originalBody);
+    }
+
+    private static bool IsStreamingRequest(string path)
+    {
+        foreach (var prefix in StreamingRoutePrefixes)
+        {
+            if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return path.Contains("/stream", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldInspectForFiltering(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        if (IsPlaybackInfoRequest(path))
+            return false;
+
+        return path.Contains("/Items", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/Shows", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/Movies", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/Series", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/Users", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/Genres", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/Studios", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/Artists", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPlaybackInfoRequest(string path) =>
+        path.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase);
+
+    private bool ShouldRewritePlaybackUrlsToDownstream()
+    {
+        var configured = _configurationService.GetValue(
+            nameof(ProxyOptions.RewritePlaybackUrlsToDownstream),
+            _defaultRewritePlaybackUrlsToDownstream ? "true" : "false");
+
+        return bool.TryParse(configured, out var enabled)
+            ? enabled
+            : _defaultRewritePlaybackUrlsToDownstream;
+    }
+
+    private bool RewritePlaybackUrls(JsonNode json)
+    {
+        if (json is not JsonObject obj || obj["MediaSources"] is not JsonArray mediaSources)
+            return false;
+
+        var modified = false;
+        foreach (var mediaSource in mediaSources)
+        {
+            if (mediaSource is not JsonObject source)
+                continue;
+
+            modified = RewritePlaybackUrlField(source, "DirectStreamUrl") || modified;
+            modified = RewritePlaybackUrlField(source, "TranscodingUrl") || modified;
+        }
+
+        return modified;
+    }
+
+    private bool RewritePlaybackUrlField(JsonObject source, string fieldName)
+    {
+        var rawValue = source[fieldName]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(rawValue))
+            return false;
+
+        if (Uri.TryCreate(rawValue, UriKind.Absolute, out _))
+            return false;
+
+        if (!Uri.TryCreate($"{_jellyfinUrl.TrimEnd('/')}/", UriKind.Absolute, out var baseUri))
+            return false;
+
+        if (!Uri.TryCreate(baseUri, rawValue, out var absolute))
+            return false;
+
+        source[fieldName] = absolute.ToString();
+        return true;
     }
 
     // -------------------------------------------------------------------------

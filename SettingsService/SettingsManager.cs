@@ -36,7 +36,8 @@ public class SettingsManager : ISettingsService
                 : _defaultOptions.TmdbWorkerCount,
             TmdbQueueCapacity = await _databaseService.GetAsync<int>("TmdbQueueCapacity") != 0 
                 ? await _databaseService.GetAsync<int>("TmdbQueueCapacity") 
-                : _defaultOptions.TmdbQueueCapacity
+                : _defaultOptions.TmdbQueueCapacity,
+            RewritePlaybackUrlsToDownstream = await _databaseService.GetAsync<bool>("RewritePlaybackUrlsToDownstream")
         };
         
         return options;
@@ -52,6 +53,7 @@ public class SettingsManager : ISettingsService
         await _databaseService.SetAsync("DatabasePath", options.DatabasePath);
         await _databaseService.SetAsync("TmdbWorkerCount", options.TmdbWorkerCount);
         await _databaseService.SetAsync("TmdbQueueCapacity", options.TmdbQueueCapacity);
+        await _databaseService.SetAsync("RewritePlaybackUrlsToDownstream", options.RewritePlaybackUrlsToDownstream);
     }
     
     public async Task InitializeAsync()
